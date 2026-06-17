@@ -1,12 +1,13 @@
 {
-  "name": "super-app",
+  "name": "api-assps-edu-pk",
   "version": "0.1.0",
   "private": true,
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "seed:demo": "node prisma/seed-demo.js"
   },
   "dependencies": {
     "axios": "^1.16.0",
