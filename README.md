@@ -20,7 +20,15 @@ Apex Connect / portal application repository.
 - `api.assps.edu.pk` and `apex.assps.edu.pk` currently come from the same live codebase.
 - This repository is split separately for source control clarity, but live hosting is still shared unless infrastructure is separated later.
 
+## Boundary Guide
+
+- operational app focus: yes
+- authenticated dashboards: yes
+- API route handlers: yes
+- Apex cinematic marketing experience: currently present, but should move out over time
+
+See [ARCHITECTURE.md](ARCHITECTURE.md).
+
 ## Safety
 
 - GitHub pushes do not change production automatically.
-
