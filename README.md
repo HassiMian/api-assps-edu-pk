@@ -1,36 +1,26 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# api.assps.edu.pk
 
-## Getting Started
+Apex Connect / portal application repository.
 
-First, run the development server:
+## Domain
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
+- Production: `https://api.assps.edu.pk`
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Local Snapshot Source
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+- Original workspace source: `c:\projects\My SAas\super-app`
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Live Server Mapping
 
-## Learn More
+- App runs through Next.js / PM2
+- Reverse proxy target: `127.0.0.1:3000`
 
-To learn more about Next.js, take a look at the following resources:
+## Important Architecture Note
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+- `api.assps.edu.pk` and `apex.assps.edu.pk` currently come from the same live codebase.
+- This repository is split separately for source control clarity, but live hosting is still shared unless infrastructure is separated later.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Safety
 
-## Deploy on Vercel
+- GitHub pushes do not change production automatically.
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
