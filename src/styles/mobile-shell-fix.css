@@ -1,0 +1,54 @@
+/* APEX Super App + portals — mobile shell scroll fix */
+
+@media (max-width: 1024px) {
+  html {
+    height: auto;
+    overflow-y: auto;
+  }
+
+  body {
+    overflow-x: hidden !important;
+    overflow-y: auto !important;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  body.apex-drawer-open {
+    overflow: hidden !important;
+    touch-action: none;
+  }
+
+  main.flex-1.overflow-y-auto {
+    min-height: 0 !important;
+    flex: 1 1 auto !important;
+    overflow-x: hidden !important;
+    overflow-y: auto !important;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-y: contain;
+  }
+
+  .min-h-screen.flex.relative > .flex-1.flex.flex-col {
+    min-height: 0;
+    width: 100%;
+    max-width: 100%;
+  }
+
+  .min-h-\[85vh\] {
+    min-height: auto !important;
+    height: auto !important;
+  }
+
+  .overflow-hidden.rounded-3xl {
+    overflow-x: hidden !important;
+    overflow-y: visible !important;
+  }
+}
+
+@media (max-width: 768px) {
+  .responsive-table-wrap,
+  .overflow-x-auto,
+  .table-container {
+    max-width: 100%;
+    overflow-x: auto !important;
+    -webkit-overflow-scrolling: touch;
+  }
+}
