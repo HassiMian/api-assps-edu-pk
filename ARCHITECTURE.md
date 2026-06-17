@@ -49,3 +49,4 @@ When infrastructure separation is ready:
 
 Until live infrastructure is separated, changes here may still conceptually affect the shared super-app code line, even if source control is now split.
 
+See also [MIGRATION_PLAN.md](MIGRATION_PLAN.md).
