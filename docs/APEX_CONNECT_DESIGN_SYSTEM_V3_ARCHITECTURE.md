@@ -91,3 +91,7 @@ These changes close problems discovered in the original shell review without cha
 ### Human verification still required
 
 Compare 375/768/1024/1440px browser screenshots including dark-to-light form islands, select menus, overlays, empty/error/loaded states, keyboard navigation and mobile drawer after desktop-collapse. Accessibility checkers cannot inspect all dynamic contrast interactions from source text alone. Do not claim that 39 inner routes have been manually pixel-audited until this is done.
+
+### V3.1 production post-release route matrix
+
+On build `FY6kcFkFX439ZDyIbdAlj`, a synthetic tenant was used to authenticate all four portal roles against the actual backend. All four dashboard GETs and the **33 fixed child routes** returned HTTP 200: Admin 17, Teacher 8, Student 5 and Parent 3. Each role's navigation attempt into a different portal redirected with HTTP 307. Synthetic school/users were deleted after the test. This extends, rather than replaces, the earlier 16-route preview gate. Dynamic exam detail (`/student/online-test/[examId]`) requires an actual generated exam fixture and was not included in this fixed-route matrix.
