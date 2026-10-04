@@ -1,60 +1,37 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getPool } from "@/lib/server/db";
+import { envString } from "@/lib/server/env";
 
 export const dynamic = "force-dynamic";
 
+function backendApiUrl() {
+  return envString("BACKEND_URL", "http://127.0.0.1:5000/api").replace(/\/$/, "");
+}
+
 export async function GET(req: NextRequest) {
-  const schoolId = req.nextUrl.searchParams.get("school_id") || req.nextUrl.searchParams.get("schoolId");
-  const schoolCode =
-    req.nextUrl.searchParams.get("school_code") || req.nextUrl.searchParams.get("schoolCode");
+  const query = req.nextUrl.searchParams.toString();
+  const url = `${backendApiUrl()}/settings/public${query ? `?${query}` : ""}`;
 
   try {
-    const pool = getPool();
-    const params: string[] = [];
-    let where = "WHERE status IS NULL OR LOWER(status) = 'active'";
-
-    if (schoolCode) {
-      params.push(String(schoolCode).trim());
-      where += ` AND LOWER(COALESCE(code, '')) = LOWER($${params.length})`;
-    } else if (schoolId) {
-      params.push(String(schoolId).trim());
-      where += ` AND (CAST(id AS TEXT) = $${params.length} OR LOWER(COALESCE(tenant_id, '')) = LOWER($${params.length}))`;
-    } else {
-      return NextResponse.json(
-        { success: false, message: "school_id or school_code is required" },
-        { status: 400 }
-      );
-    }
-
-    const result = await pool.query(
-      `SELECT id, school_name, code, tenant_id, logo_url, primary_color, secondary_color
-       FROM schools
-       ${where}
-       ORDER BY id ASC
-       LIMIT 1`,
-      params
-    );
-
-    if (!result.rows.length) {
-      return NextResponse.json({ success: false, message: "School not found" }, { status: 404 });
-    }
-
-    const row = result.rows[0];
-    return NextResponse.json({
-      success: true,
-      data: {
-        school_id: String(row.id),
-        school_code: row.code || row.tenant_id || null,
-        school_name: row.school_name || "School",
-        school_logo: row.logo_url || null,
-        branding_config: {
-          primaryColor: row.primary_color || null,
-          secondaryColor: row.secondary_color || null,
-        },
+    const response = await fetch(url, {
+      method: "GET",
+      cache: "no-store",
+      headers: {
+        Accept: "application/json",
+        "X-Forwarded-Host": req.headers.get("host") || "api.assps.edu.pk",
+        "X-Forwarded-Proto": "https",
       },
     });
-  } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : "Failed to load school";
-    return NextResponse.json({ success: false, message }, { status: 500 });
+
+    const data = await response.json().catch(() => ({
+      success: false,
+      message: "Invalid response from canonical settings service",
+    }));
+
+    return NextResponse.json(data, { status: response.status });
+  } catch {
+    return NextResponse.json(
+      { success: false, message: "Canonical settings service is unavailable" },
+      { status: 503 }
+    );
   }
 }

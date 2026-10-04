@@ -15,6 +15,7 @@ const EMPTY = {
   stats: { totalStudents: 0, presentCount: 0, absentCount: 0, attPct: 0, pendingCount: 0 },
   revenueData: [],
   genderData: [],
+  attendanceBreakdown: [],
   recentNotices: [],
 };
 
@@ -28,7 +29,7 @@ export default function ParentDashboard() {
 
   const stats = data?.stats || EMPTY.stats;
   const revenue = data?.revenueData || EMPTY.revenueData;
-  const attendance = data?.genderData || EMPTY.genderData;
+  const attendance = data?.attendanceBreakdown || [];
   const notices = data?.recentNotices || EMPTY.recentNotices;
   const hasLiveData = revenue.length > 0 || attendance.length > 0 || notices.length > 0 || stats.totalStudents > 0;
 

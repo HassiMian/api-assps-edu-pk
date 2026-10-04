@@ -60,6 +60,13 @@ async function dispatchLocalApi(req: NextRequest, targetPath: string) {
 async function handler(req: NextRequest, { params }: { params: Promise<{ path: string[] }> }) {
   const { path } = await params;
   const targetPath = path.join('/');
+  // Protect one-time credential issuance against cross-origin browser requests.
+  if (targetPath === 'auth/users/provision-one' && req.method === 'POST') {
+    const origin = req.headers.get('origin');
+    if (origin && origin !== req.nextUrl.origin) {
+      return NextResponse.json({ success: false, message: 'Origin not allowed.' }, { status: 403 });
+    }
+  }
   const localResponse = await dispatchLocalApi(req, targetPath);
   if (localResponse) {
     return localResponse;
@@ -86,6 +93,8 @@ async function handler(req: NextRequest, { params }: { params: Promise<{ path: s
 
   const auth = req.headers.get('Authorization');
   if (auth) headers['Authorization'] = auth;
+  const cookie = req.headers.get('cookie');
+  if (cookie) headers['Cookie'] = cookie;
 
   try {
     const body = req.method !== 'GET' && req.method !== 'HEAD' ? await req.arrayBuffer() : undefined;
@@ -97,18 +106,31 @@ async function handler(req: NextRequest, { params }: { params: Promise<{ path: s
     });
 
     const contentType = response.headers.get('content-type') || '';
+    const copySetCookies = (out: NextResponse) => {
+      const getSetCookie = (response.headers as Headers & { getSetCookie?: () => string[] }).getSetCookie;
+      const cookies = typeof getSetCookie === 'function'
+        ? getSetCookie.call(response.headers)
+        : (response.headers.get('set-cookie') ? [response.headers.get('set-cookie') as string] : []);
+      for (const value of cookies) out.headers.append('Set-Cookie', value);
+      for (const name of ['ratelimit-limit', 'ratelimit-remaining', 'ratelimit-reset', 'retry-after', 'cache-control', 'pragma']) {
+        const value = response.headers.get(name);
+        if (value) out.headers.set(name, value);
+      }
+      return out;
+    };
+
     if (contentType.includes('application/json')) {
       const data = await response.json();
-      return NextResponse.json(data, { status: response.status });
+      return copySetCookies(NextResponse.json(data, { status: response.status }));
     }
 
     const text = await response.text();
-    return new NextResponse(text, {
+    return copySetCookies(new NextResponse(text, {
       status: response.status,
       headers: {
         'Content-Type': contentType || 'text/plain; charset=utf-8',
       },
-    });
+    }));
   } catch {
     return NextResponse.json(
       { success: false, message: 'Backend server is not reachable. Please start the backend on port 5000.' },

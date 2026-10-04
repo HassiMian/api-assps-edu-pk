@@ -15,14 +15,81 @@ type UserData = {
   status: string;
 };
 
+type MissingIdentity = {
+  id: number;
+  name: string;
+  login_reference: string;
+  missing_student?: boolean;
+  missing_parent?: boolean;
+  requires_guardian_contact?: boolean;
+};
+type IssuedIdentity = {
+  kind: string;
+  loginId: string;
+  email: string;
+  created: boolean;
+  temporaryPassword: string | null;
+};
+
 export default function AdminUsers() {
   const [users, setUsers] = useState<UserData[]>([]);
   const { user } = useAuth();
+  const [missing, setMissing] = useState<{students: MissingIdentity[]; teachers: MissingIdentity[]}>({ students: [], teachers: [] });
+  const [issued, setIssued] = useState<IssuedIdentity[] | null>(null);
+  const [repairing, setRepairing] = useState<string | null>(null);
+  const [repairError, setRepairError] = useState('');
+  const [guardianPhones, setGuardianPhones] = useState<Record<number, string>>({});
+  const [guardianVerified, setGuardianVerified] = useState<Record<number, boolean>>({});
+  const [savingGuardian, setSavingGuardian] = useState<number | null>(null);
+  const saveGuardianContact = async (studentId: number) => {
+    setSavingGuardian(studentId);
+    setRepairError('');
+    try {
+      await api.patch('/auth/users/guardian-contact', {
+        studentId,
+        phone: guardianPhones[studentId] || '',
+        verified: guardianVerified[studentId] === true,
+      });
+      setGuardianPhones(prev => ({ ...prev, [studentId]: '' }));
+      setGuardianVerified(prev => ({ ...prev, [studentId]: false }));
+      await loadMissing();
+    } catch (err: any) {
+      setRepairError(err?.response?.data?.message || 'Verified guardian contact could not be saved.');
+    } finally {
+      setSavingGuardian(null);
+    }
+  };
+
+  const loadMissing = async () => {
+    try {
+      const response = await api.get('/auth/users/missing-portal-links');
+      if (response.data?.success) setMissing(response.data.data);
+    } catch {
+      setRepairError('Could not load portal identity reconciliation.');
+    }
+  };
+  const repairOne = async (kind: 'student' | 'teacher', entityId: number) => {
+    setRepairing(`${kind}-${entityId}`);
+    setRepairError('');
+    setIssued(null);
+    try {
+      const response = await api.post('/auth/users/provision-one', { kind, entityId });
+      if (response.data?.success) {
+        setIssued(response.data.issued || []);
+        await Promise.all([loadMissing(), fetchAllUsers()]);
+      }
+    } catch (err: any) {
+      setRepairError(err?.response?.data?.message || 'Identity issuance was not completed.');
+    } finally {
+      setRepairing(null);
+    }
+  };
+
 
   const [showAddModal, setShowAddModal] = useState(false);
   const [showPasswordModal, setShowPasswordModal] = useState<string | null>(null);
   
-  const [newUser, setNewUser] = useState({ name: '', email: '', password: '', role: 'student', designation: '' });
+  const [newUser, setNewUser] = useState({ name: '', email: '', password: '', role: 'admin', designation: 'Administrator' });
   const [newPassword, setNewPassword] = useState('');
   const [showPwd, setShowPwd] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -31,35 +98,24 @@ export default function AdminUsers() {
 
   const fetchAllUsers = async () => {
     try {
-      const [empRes, stdRes] = await Promise.all([
-        api.get('/employees?active=true'),
-        api.get('/students?active=true')
-      ]);
-
-      const employees: UserData[] = empRes.data.success ? empRes.data.data.map((e: any) => ({
-        id: `emp-${e.id}`,
-        name: e.name,
-        role: e.designation || 'Staff',
-        email: e.email || `${e.emp_id.toLowerCase()}@school.com`,
-        status: 'Active'
-      })) : [];
-
-      const students: UserData[] = stdRes.data.success ? stdRes.data.data.map((s: any) => ({
-        id: `std-${s.id}`,
-        name: s.name,
-        role: 'Student',
-        email: `${s.roll_number || s.gr_number}@student.com`.toLowerCase(),
-        status: 'Active'
-      })) : [];
-
-      setUsers([...employees, ...students]);
+      const res = await api.get('/auth/users');
+      const rows = res.data?.success && Array.isArray(res.data?.data) ? res.data.data : [];
+      const identities: UserData[] = rows.map((u: any) => ({
+        id: u.id,
+        name: u.name || u.username || 'User',
+        role: u.role || 'user',
+        email: u.email || u.username || '',
+        status: u.is_active ? 'Active' : 'Inactive',
+      }));
+      setUsers(identities);
     } catch (error) {
       console.error("Failed to fetch users", error);
+      setUsers([]);
     }
   };
 
   useEffect(() => {
-    if (user) fetchAllUsers();
+    if (user) { fetchAllUsers(); loadMissing(); }
   }, [user]);
 
   const handleAddUser = async (e: React.FormEvent) => {
@@ -69,7 +125,7 @@ export default function AdminUsers() {
       const res = await api.post('/auth/users', newUser);
       if (res.data.success) {
         setSuccess('User created successfully!');
-        setNewUser({ name: '', email: '', password: '', role: 'student', designation: '' });
+        setNewUser({ name: '', email: '', password: '', role: 'admin', designation: 'Administrator' });
         setTimeout(() => setShowAddModal(false), 1500);
         fetchAllUsers();
       }
@@ -114,9 +170,62 @@ export default function AdminUsers() {
           className="bg-blue-600 hover:bg-blue-500 text-white font-medium py-2.5 px-6 rounded-xl flex items-center gap-2 transition-colors shadow-lg shadow-blue-500/20"
         >
           <UserPlus className="w-5 h-5" />
-          Add User
+          Add Admin
         </button>
       </div>
+
+      <section className="glass-card p-5 mb-6 space-y-4" aria-label="Missing portal identities">
+        <div>
+          <h2 className="text-lg font-semibold text-white">Portal login reconciliation</h2>
+          <p className="text-sm text-slate-400">Repair one linked student or teacher record at a time. Newly issued temporary credentials appear once; hand them to the correct family or teacher privately.</p>
+        </div>
+        {repairError && <p role="alert" className="text-sm text-red-400">{repairError}</p>}
+        <p className="text-sm text-slate-300">Students needing repair: {missing.students.length} · Teachers needing repair: {missing.teachers.length}</p>
+        <div className="max-h-64 overflow-y-auto space-y-2">
+          {missing.students.map(item => (
+            <div key={`student-${item.id}`} className="flex flex-wrap items-center justify-between gap-3 border border-slate-700 rounded-lg p-3 text-sm">
+              <div><span className="text-white">{item.name}</span> <span className="text-slate-400">({item.login_reference})</span>
+                <p className="text-xs text-amber-300">{item.missing_student ? 'Student login missing' : ''}{item.missing_student && item.missing_parent ? ' · ' : ''}{item.missing_parent ? 'Parent login missing' : ''}</p>
+              </div>
+              {item.requires_guardian_contact ? (
+                <div className="space-y-2 w-full md:max-w-sm">
+                  <p className="text-xs text-amber-300">Guardian mobile is missing. Verify it from the admission record or directly with the guardian before issuing a parent login.</p>
+                  <input value={guardianPhones[item.id] || ''}
+                    onChange={e => setGuardianPhones(prev => ({ ...prev, [item.id]: e.target.value }))}
+                    placeholder="Verified guardian mobile (03XXXXXXXXX)" inputMode="tel"
+                    className="w-full rounded-lg border border-slate-600 bg-slate-900 px-3 py-2 text-white" />
+                  <label className="flex gap-2 text-xs text-slate-300 items-start">
+                    <input type="checkbox" checked={guardianVerified[item.id] === true}
+                      onChange={e => setGuardianVerified(prev => ({ ...prev, [item.id]: e.target.checked }))} />
+                    I verified this guardian number against the school's records or directly with the guardian.
+                  </label>
+                  <button type="button" disabled={!guardianVerified[item.id] || savingGuardian !== null}
+                    onClick={() => saveGuardianContact(item.id)}
+                    className="rounded-lg border border-amber-500/40 px-3 py-2 text-white disabled:opacity-40">
+                    {savingGuardian === item.id ? 'Saving...' : 'Save verified guardian contact'}
+                  </button>
+                </div>
+              ) : <button type="button" disabled={repairing !== null || issued !== null} onClick={() => repairOne('student', item.id)} className="rounded-lg bg-blue-600 px-3 py-2 text-white disabled:opacity-40">{repairing === `student-${item.id}` ? 'Repairing...' : 'Issue linked login'}</button>}
+            </div>
+          ))}
+          {missing.teachers.map(item => (
+            <div key={`teacher-${item.id}`} className="flex items-center justify-between gap-3 border border-slate-700 rounded-lg p-3 text-sm">
+              <div className="text-white">{item.name} <span className="text-slate-400">({item.login_reference})</span> · Teacher login missing</div>
+              <button type="button" disabled={repairing !== null || issued !== null} onClick={() => repairOne('teacher', item.id)} className="rounded-lg bg-blue-600 px-3 py-2 text-white disabled:opacity-40">{repairing === `teacher-${item.id}` ? 'Repairing...' : 'Issue linked login'}</button>
+            </div>
+          ))}
+        </div>
+        {issued && <div className="rounded-xl border border-amber-500/30 bg-slate-900 p-4 space-y-3">
+          <h3 className="font-semibold text-amber-300">One-time credential handoff</h3>
+          <p className="text-xs text-slate-400">Do not screenshot or publish these credentials. Existing linked account passwords have not been changed. Closing this section clears the credentials from the page.</p>
+          {issued.map((item, i) => <div key={`${item.kind}-${i}`} className="border-t border-slate-700 pt-2 text-sm space-y-1">
+            <p className="text-white">{item.kind}: {item.loginId}</p>
+            <p className="text-slate-400">{item.created ? 'Newly created' : 'Existing link preserved'}</p>
+            {item.temporaryPassword && <p className="text-amber-200 break-all">Temporary password: {item.temporaryPassword}</p>}
+          </div>)}
+          <button type="button" onClick={() => setIssued(null)} className="rounded-lg border border-slate-600 px-4 py-2 text-white">I have securely handed over the credentials — clear display</button>
+        </div>}
+      </section>
 
       <div className="glass-card overflow-hidden">
         <div className="overflow-x-auto relative min-h-[300px]">
@@ -212,11 +321,9 @@ export default function AdminUsers() {
               <div>
                 <label className="block text-sm font-medium text-slate-400 mb-1">Role</label>
                 <select value={newUser.role} onChange={e => setNewUser({...newUser, role: e.target.value})} className="w-full bg-slate-800 border border-slate-700 text-white rounded-xl px-4 py-2 focus:ring-2 focus:ring-blue-500 outline-none">
-                  <option value="student">Student</option>
-                  <option value="teacher">Teacher</option>
-                  <option value="parent">Parent</option>
                   <option value="admin">Admin</option>
                 </select>
+                <p className="mt-1 text-xs text-slate-500">Teacher, student, and parent identities are provisioned from their linked records.</p>
               </div>
               <div>
                 <label className="block text-sm font-medium text-slate-400 mb-1">Password</label>

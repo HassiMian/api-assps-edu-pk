@@ -13,6 +13,7 @@ const EMPTY = {
   stats: { totalStudents: 0, presentCount: 0, attPct: 0 },
   classDistribution: [],
   genderData: [],
+  attendanceBreakdown: [],
   recentNotices: [],
 };
 
@@ -32,8 +33,8 @@ export default function StudentDashboard() {
   const { data } = useApiData('/portal/dashboard', EMPTY);
 
   const stats = data?.stats || EMPTY.stats;
-  const subjects = data?.classDistribution || EMPTY.classDistribution;
-  const attendance = data?.genderData || EMPTY.genderData;
+  const subjects: any[] = []; // Subject-score analytics are not wired yet; never substitute class counts.
+  const attendance = data?.attendanceBreakdown || [];
   const notices = data?.recentNotices || EMPTY.recentNotices;
   const hasLiveData = subjects.length > 0 || attendance.length > 0 || notices.length > 0 || stats.totalStudents > 0;
 
@@ -41,7 +42,7 @@ export default function StudentDashboard() {
     { label: 'Students', value: stats.totalStudents, icon: Users, color: 'blue' },
     { label: 'Present Today', value: stats.presentCount, icon: BrainCircuit, color: 'emerald' },
     { label: 'Attendance', value: `${stats.attPct}%`, icon: TrendingUp, color: 'amber' },
-    { label: 'Learning Rank', value: hasLiveData ? '#5' : '—', icon: Star, color: 'purple' },
+    { label: 'Learning Rank', value: '—', icon: Star, color: 'purple' },
   ];
 
   return (
@@ -59,6 +60,9 @@ export default function StudentDashboard() {
             <div className="flex gap-4">
               <Link href="/student/quiz" className="bg-white text-blue-700 hover:bg-blue-50 font-semibold py-2.5 px-6 rounded-xl transition-colors shadow-lg">
                 Start AI Quiz
+              </Link>
+              <Link href="/student/exams" className="bg-emerald-600 hover:bg-emerald-500 text-white font-semibold py-2.5 px-6 rounded-xl border border-white/20 transition-colors">
+                Online Exams
               </Link>
               <Link href="/student/homework" className="bg-blue-700/40 hover:bg-blue-700/60 text-white font-semibold py-2.5 px-6 rounded-xl border border-white/20 transition-colors">
                 My Homework
@@ -81,10 +85,10 @@ export default function StudentDashboard() {
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-5 mb-8">
         {[
-          { label: 'Streak', value: hasLiveData ? '7 days' : '—', icon: Flame, color: 'amber' },
-          { label: 'Top Subject', value: hasLiveData ? 'Live data pending' : 'No data yet', icon: Trophy, color: 'emerald' },
-          { label: 'Quizzes Done', value: hasLiveData ? '12' : '0', icon: BrainCircuit, color: 'blue' },
-          { label: 'AI Insights', value: hasLiveData ? 'Available' : 'Pending', icon: Zap, color: 'purple' },
+          { label: 'Streak', value: '—', icon: Flame, color: 'amber' },
+          { label: 'Top Subject', value: '—', icon: Trophy, color: 'emerald' },
+          { label: 'Quizzes Done', value: '—', icon: BrainCircuit, color: 'blue' },
+          { label: 'AI Insights', value: 'Pending', icon: Zap, color: 'purple' },
         ].map((c, i) => (
           <div key={i} className={`glass-card p-5 border-t-4 border-${c.color}-500 hover:-translate-y-1 transition-transform`}>
             <div className="flex items-center gap-3">
