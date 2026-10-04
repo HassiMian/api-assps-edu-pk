@@ -15,7 +15,7 @@ type Student = {
 };
 
 export default function TeacherAttendance() {
-  const [locationStatus, setLocationStatus] = useState<'checking' | 'inside' | 'outside'>('checking');
+  const [locationStatus] = useState<'unconfigured'>('unconfigured');
   const [students, setStudents] = useState<Student[]>([]);
   const [attendance, setAttendance] = useState<Record<number, 'present' | 'absent' | 'leave'>>({});
   const [submitting, setSubmitting] = useState(false);
@@ -28,13 +28,6 @@ export default function TeacherAttendance() {
   const showToast = useCallback((msg: string, ok: boolean) => {
     setToast({ msg, ok });
     setTimeout(() => setToast(null), 4000);
-  }, []);
-
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      setLocationStatus('inside'); 
-    }, 1500);
-    return () => clearTimeout(timer);
   }, []);
 
   // Fetch teaching classes on mount
@@ -50,21 +43,13 @@ export default function TeacherAttendance() {
             setSelectedClass(fetchedClasses[0]);
           }
         } else {
-          const fallback = [
-            { class_name: '9', section: 'A' },
-            { class_name: '10', section: 'A' }
-          ];
-          setClasses(fallback);
-          setSelectedClass(fallback[0]);
+          setClasses([]);
+          setSelectedClass(null);
         }
       } catch (error) {
         console.error("Failed to fetch teaching classes:", error);
-        const fallback = [
-          { class_name: '9', section: 'A' },
-          { class_name: '10', section: 'A' }
-        ];
-        setClasses(fallback);
-        setSelectedClass(fallback[0]);
+        setClasses([]);
+        setSelectedClass(null);
       } finally {
         setLoadingClasses(false);
       }
@@ -87,12 +72,7 @@ export default function TeacherAttendance() {
         if (res.data.success) {
           setStudents(res.data.data);
           
-          // DEFAULT ALL TO PRESENT
-          const initialAttendance: Record<number, 'present'> = {};
-          res.data.data.forEach((s: Student) => {
-            initialAttendance[s.id] = 'present';
-          });
-          setAttendance(initialAttendance);
+          setAttendance({});
         } else {
           setStudents([]);
           setAttendance({});
@@ -107,12 +87,10 @@ export default function TeacherAttendance() {
   }, [selectedClass]);
 
   const markStudent = (id: number, status: 'present' | 'absent' | 'leave') => {
-    if (locationStatus !== 'inside') return;
     setAttendance(prev => ({ ...prev, [id]: status }));
   };
 
   const submitAttendance = async () => {
-    if (locationStatus !== 'inside') return;
     setSubmitting(true);
     try {
       const date = new Date().toISOString().split('T')[0];
@@ -154,36 +132,28 @@ export default function TeacherAttendance() {
           initial={{ opacity: 0, y: -10 }}
           animate={{ opacity: 1, y: 0 }}
           className={`p-4 rounded-xl flex items-center gap-4 ${
-            locationStatus === 'checking' ? 'bg-amber-500/10 border border-amber-500/20' :
-            locationStatus === 'inside' ? 'bg-emerald-500/10 border border-emerald-500/20' :
-            'bg-red-500/10 border border-red-500/20'
+            'bg-blue-500/10 border border-blue-500/20'
           }`}
         >
           <div className={`p-2 rounded-lg ${
-            locationStatus === 'checking' ? 'bg-amber-500/20 text-amber-400' :
-            locationStatus === 'inside' ? 'bg-emerald-500/20 text-emerald-400' :
-            'bg-red-500/20 text-red-400'
+            'bg-blue-500/20 text-blue-400'
           }`}>
             <MapPin className="w-6 h-6" />
           </div>
           <div>
             <h3 className={`font-bold ${
-              locationStatus === 'checking' ? 'text-amber-400' :
-              locationStatus === 'inside' ? 'text-emerald-400' :
-              'text-red-400'
+              'text-blue-300'
             }`}>
-              {locationStatus === 'checking' ? 'Verifying Geolocation...' :
-               locationStatus === 'inside' ? 'Location Verified: Inside School Boundary' :
-               'Access Denied: Outside School Boundary'}
+              Class Authorization Active
             </h3>
             <p className="text-slate-400 text-sm mt-0.5">
-              Attendance marking is restricted to school premises.
+              Attendance is restricted by your server-side class assignments. Geofence verification is not configured yet.
             </p>
           </div>
         </motion.div>
       </div>
 
-      <div className={`glass-card overflow-hidden transition-opacity duration-300 ${locationStatus !== 'inside' ? 'opacity-50 pointer-events-none' : ''}`}>
+      <div className="glass-card overflow-hidden">
         <div className="p-6 border-b border-slate-700/50 flex justify-between items-center">
           <div>
             {loadingClasses ? (
@@ -210,13 +180,13 @@ export default function TeacherAttendance() {
                 </select>
               </div>
             ) : (
-              <h3 className="text-xl font-bold text-white">No Classes Registered</h3>
+              <h3 className="text-xl font-bold text-white">No assigned classes yet</h3>
             )}
             <p className="text-slate-400 text-xs mt-1">Date: {new Date().toLocaleDateString()}</p>
           </div>
           <button 
             onClick={submitAttendance}
-            disabled={submitting}
+            disabled={submitting || !selectedClass || Object.keys(attendance).length === 0}
             className="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-medium py-2.5 px-6 rounded-xl transition-colors flex items-center gap-2"
           >
             {submitting ? <Loader2 className="w-5 h-5 animate-spin" /> : <CheckCircle2 className="w-5 h-5" />}

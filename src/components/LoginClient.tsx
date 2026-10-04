@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from 'react';
-import { BrainCircuit, Lock, Mail, ArrowRight, ShieldAlert, Eye, EyeOff, ArrowLeft, Shield, Users, GraduationCap, User, Building, MonitorPlay } from 'lucide-react';
+import { BrainCircuit, Lock, Mail, ArrowRight, ShieldAlert, Eye, EyeOff, ArrowLeft, Shield, Users, GraduationCap, User, Building } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import api from '@/utils/api';
 import PremiumLogo from '@/components/PremiumLogo';
@@ -179,25 +179,7 @@ export default function LoginClient() {
     setSelectedRole(null);
   };
 
-  const openDemoAccess = () => {
-    setError('');
-    setSchoolId('demo');
-    setSchoolCode('DEMO');
-    setSchoolName('APEX Demo Tenant');
-    setSchoolLogo(null);
-    setSelectedRole('admin');
-    setEmail('demo@apex.assps.edu.pk');
-  };
 
-  const openSuperAdmin = () => {
-    setError('');
-    setSchoolId('super-admin');
-    setSchoolCode('APEX');
-    setSchoolName('APEX Super Admin');
-    setSchoolLogo(null);
-    setSelectedRole('admin');
-    setEmail('superadmin@apex.assps.edu.pk');
-  };
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -213,6 +195,9 @@ export default function LoginClient() {
     try {
       const body: Record<string, unknown> = { email, password };
       if (selectedRole) body.role = selectedRole;
+      if (schoolCode?.toUpperCase() === 'DEMO' || String(schoolId || '').toLowerCase() === 'demo') {
+        body.demoMode = true;
+      }
       if (shouldAttachSchoolScope(schoolId, schoolCode)) {
         if (schoolCode) body.school_code = schoolCode;
         else if (schoolId) body.school_id = schoolId;
@@ -232,18 +217,7 @@ export default function LoginClient() {
       }
 
       if (data.success) {
-        contextLogin(data.token, data.refreshToken || null, data.user);
-        if (data.token) {
-          try {
-            await fetchWithTimeout("/api/auth/sync-session", {
-              method: "POST",
-              headers: { Authorization: `Bearer ${data.token}` },
-              credentials: "include",
-            }, 6000);
-          } catch {
-            /* client redirect still works via localStorage */
-          }
-        }
+        contextLogin(data.token || '', null, data.user);
         if (data.mustChangePassword && data.redirectTo) {
           window.location.replace(
             coerceConnectRedirect(String(data.redirectTo), data.user?.role, selectedRole || undefined)
@@ -328,7 +302,7 @@ export default function LoginClient() {
                   <Building className="text-white w-8 h-8" />
                 </div>
                 <h1 className="text-xl font-bold text-white tracking-tight text-center">Find Your School</h1>
-                <p className="text-slate-400 text-sm mt-2 text-center">Enter a school code, choose demo access, or open the APEX portal selector.</p>
+                <p className="text-slate-400 text-sm mt-2 text-center">Enter your school code or open the APEX portal selector.</p>
               </div>
 
               {error && (
@@ -369,33 +343,15 @@ export default function LoginClient() {
                 </button>
               </form>
 
-              <div className="mx-auto grid max-w-2xl gap-3 sm:grid-cols-3">
+              <div className="mx-auto max-w-sm">
                 <button
                   type="button"
                   onClick={openDefaultSelector}
-                  className="rounded-2xl border border-cyan-300/20 bg-cyan-300/10 p-4 text-left transition hover:border-cyan-300/40"
+                  className="w-full rounded-2xl border border-cyan-300/20 bg-cyan-300/10 p-4 text-left transition hover:border-cyan-300/40"
                 >
                   <Building className="h-5 w-5 text-cyan-200" />
                   <div className="mt-3 text-sm font-bold text-white">Login Selector</div>
                   <div className="mt-1 text-xs text-slate-400">Admin, teacher, parent, student</div>
-                </button>
-                <button
-                  type="button"
-                  onClick={openDemoAccess}
-                  className="rounded-2xl border border-emerald-300/20 bg-emerald-300/10 p-4 text-left transition hover:border-emerald-300/40"
-                >
-                  <MonitorPlay className="h-5 w-5 text-emerald-200" />
-                  <div className="mt-3 text-sm font-bold text-white">Demo Access</div>
-                  <div className="mt-1 text-xs text-slate-400">Uses demo tenant only</div>
-                </button>
-                <button
-                  type="button"
-                  onClick={openSuperAdmin}
-                  className="rounded-2xl border border-white/10 bg-white/[0.06] p-4 text-left transition hover:border-cyan-300/40"
-                >
-                  <Shield className="h-5 w-5 text-cyan-200" />
-                  <div className="mt-3 text-sm font-bold text-white">Super Admin Login</div>
-                  <div className="mt-1 text-xs text-slate-400">Subscription verification</div>
                 </button>
               </div>
             </div>

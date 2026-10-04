@@ -21,6 +21,7 @@ const PROOF_LABEL: Record<string, string> = {
 };
 
 const EMPTY_FEES: any[] = [];
+const PAYMENT_SUBMISSION_ENABLED = false;
 
 export default function ParentFinance() {
   const [paymentMethod, setPaymentMethod] = useState<'jazzcash' | 'easypaisa' | 'bank'>('jazzcash');
@@ -54,6 +55,10 @@ export default function ParentFinance() {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (!PAYMENT_SUBMISSION_ENABLED) {
+      showAlert('error', 'Online payment instructions are not configured yet. Please contact the school office.');
+      return;
+    }
     if (!selectedChallan) { showAlert('error', 'Select a live fee month first.'); return; }
     if (!proofImage) { showAlert('error', 'Please upload your payment screenshot.'); return; }
     setUploading(true);
@@ -126,11 +131,9 @@ export default function ParentFinance() {
               </div>
             </div>
 
-            <div className="p-4 rounded-xl bg-slate-800/50 border border-slate-700/50 text-sm">
-              <p className="text-slate-400 mb-1 text-xs">Send payment to:</p>
-              {paymentMethod === 'jazzcash' && <p className="text-white font-mono font-bold">0300-1234567 (Al-Siddique)</p>}
-              {paymentMethod === 'easypaisa' && <p className="text-white font-mono font-bold">0345-7654321 (Al-Siddique)</p>}
-              {paymentMethod === 'bank' && <p className="text-white font-mono font-bold">Meezan Bank — 0123456789</p>}
+            <div className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/30 text-sm">
+              <p className="font-semibold text-amber-300">Online payment instructions are not configured yet.</p>
+              <p className="mt-1 text-slate-300">Do not send money to any number shown in an old screenshot or cached page. Please contact the school office for verified payment instructions.</p>
             </div>
 
             <div>
@@ -165,12 +168,14 @@ export default function ParentFinance() {
 
             <button
               type="submit"
-              disabled={uploading || unpaidFees.length === 0}
+              disabled={!PAYMENT_SUBMISSION_ENABLED || uploading || unpaidFees.length === 0}
               className="w-full bg-blue-600 hover:bg-blue-500 text-white font-semibold py-3.5 rounded-xl transition-transform active:scale-95 disabled:opacity-50 flex items-center justify-center gap-2 shadow-lg shadow-blue-500/20"
             >
               {uploading
                 ? <><span className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" /> Uploading...</>
-                : <><Upload className="w-5 h-5" /> Submit for Approval</>}
+                : PAYMENT_SUBMISSION_ENABLED
+                  ? <><Upload className="w-5 h-5" /> Submit for Approval</>
+                  : <>Online payment setup pending</>}
             </button>
           </form>
         </div>

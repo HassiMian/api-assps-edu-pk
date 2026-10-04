@@ -191,10 +191,10 @@ export default function ApexSceneGalaxy() {
                   />
                   {!reduce && (
                     <>
-                      <circle r="5" fill={WORLDS[i].color} opacity="0.9">
+                      <circle cx="0" cy="0" r="5" fill={WORLDS[i].color} opacity="0.9">
                         <animateMotion dur={`${2.8 + i * 0.4}s`} repeatCount="indefinite" path={s.d} />
                       </circle>
-                      <circle r="3" fill="#fff" opacity="0.7">
+                      <circle cx="0" cy="0" r="3" fill="#fff" opacity="0.7">
                         <animateMotion
                           dur={`${3.6 + i * 0.5}s`}
                           repeatCount="indefinite"

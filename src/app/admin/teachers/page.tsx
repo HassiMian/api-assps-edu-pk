@@ -35,6 +35,11 @@ export default function TeacherManagement() {
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [error, setError] = useState('');
   const [newTeacherLogin, setNewTeacherLogin] = useState<{loginId: string; temporaryPassword: string} | null>(null);
+  const [assignments, setAssignments] = useState<any[]>([]);
+  const [classOptions, setClassOptions] = useState<Array<{ class_name: string; section: string }>>([]);
+  const [assignmentTeacher, setAssignmentTeacher] = useState<Teacher | null>(null);
+  const [assignmentForm, setAssignmentForm] = useState({ class_name: '', section: '', subject: '' });
+  const [assignmentSaving, setAssignmentSaving] = useState(false);
 
   useEffect(() => {
     fetchTeachers();
@@ -60,18 +65,22 @@ export default function TeacherManagement() {
     try {
       setLoading(true);
       setError('');
-      const [staffRes, assignmentRes] = await Promise.all([
+      const [staffRes, assignmentRes, teachingRes] = await Promise.all([
         api.get('/employees?active=true'),
         api.get('/portal/teacher-assignments').catch(() => ({ data: { data: [] } })),
+        api.get('/portal/teaching-options').catch(() => ({ data: { data: { classes: [] } } })),
       ]);
       const staff = Array.isArray(staffRes.data?.data) ? staffRes.data.data : [];
-      const assignments = Array.isArray(assignmentRes.data?.data) ? assignmentRes.data.data : [];
+      const liveAssignments = Array.isArray(assignmentRes.data?.data) ? assignmentRes.data.data : [];
+      const liveClassOptions = Array.isArray(teachingRes.data?.data?.classes) ? teachingRes.data.data.classes : [];
+      setAssignments(liveAssignments);
+      setClassOptions(liveClassOptions);
       const teacherRows = staff.filter((employee: any) =>
         String(employee.portal_role || '').toLowerCase() === 'teacher' ||
         String(employee.designation || '').toLowerCase().includes('teacher') ||
-        assignments.some((a: any) => Number(a.teacher_user_id) === Number(employee.user_id))
+        liveAssignments.some((a: any) => Number(a.teacher_user_id) === Number(employee.user_id))
       );
-      setTeachers(teacherRows.map((row: any) => normalizeTeacher(row, assignments)));
+      setTeachers(teacherRows.map((row: any) => normalizeTeacher(row, liveAssignments)));
     } catch {
       setTeachers([]);
       setError('Live teacher records could not be loaded. No sample data is being shown.');
@@ -139,6 +148,48 @@ export default function TeacherManagement() {
     setEditingTeacher(null);
     setFormData({ status: 'active', classes: [] });
     setShowModal(true);
+  };
+
+  const openAssignments = (teacher: Teacher) => {
+    if (!teacher.user_id) {
+      setError('Teacher portal identity is missing. Repair the teacher login first.');
+      return;
+    }
+    const first = classOptions[0] || { class_name: '', section: '' };
+    setAssignmentTeacher(teacher);
+    setAssignmentForm({ class_name: first.class_name || '', section: first.section || '', subject: teacher.subject || '' });
+  };
+
+  const saveAssignment = async () => {
+    if (!assignmentTeacher?.user_id || !assignmentForm.class_name) return;
+    try {
+      setAssignmentSaving(true);
+      setError('');
+      await api.post('/portal/teacher-assignments', {
+        teacher_user_id: assignmentTeacher.user_id,
+        class_name: assignmentForm.class_name,
+        section: assignmentForm.section,
+        subject: assignmentForm.subject,
+      });
+      await fetchTeachers();
+    } catch (err: any) {
+      setError(err?.response?.data?.message || 'Teacher class assignment could not be saved.');
+    } finally {
+      setAssignmentSaving(false);
+    }
+  };
+
+  const removeAssignment = async (assignmentId: number) => {
+    try {
+      setAssignmentSaving(true);
+      setError('');
+      await api.delete(`/portal/teacher-assignments/${assignmentId}`);
+      await fetchTeachers();
+    } catch (err: any) {
+      setError(err?.response?.data?.message || 'Teacher class assignment could not be removed.');
+    } finally {
+      setAssignmentSaving(false);
+    }
   };
 
   const statusColors: Record<string, string> = {
@@ -288,6 +339,9 @@ export default function TeacherManagement() {
                       <td className="p-4 text-slate-300">Rs. {teacher.salary.toLocaleString()}</td>
                       <td className="p-4 text-right">
                         <div className="flex items-center justify-end gap-2">
+                          <button title="Assign classes" onClick={() => openAssignments(teacher)} className="p-2 rounded-lg hover:bg-slate-700/50 text-slate-400 hover:text-emerald-400 transition-colors">
+                            <BookOpen className="w-4 h-4" />
+                          </button>
                           <button onClick={() => openEdit(teacher)} className="p-2 rounded-lg hover:bg-slate-700/50 text-slate-400 hover:text-blue-400 transition-colors">
                             <Edit2 className="w-4 h-4" />
                           </button>
@@ -415,6 +469,52 @@ export default function TeacherManagement() {
                   {saving && <Loader2 className="w-4 h-4 animate-spin" />}
                   {editingTeacher ? 'Update Teacher' : 'Create Teacher'}
                 </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {assignmentTeacher && (
+          <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+            <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="glass-card w-full max-w-2xl p-6 border-slate-600/50">
+              <div className="flex items-start justify-between gap-4 mb-5">
+                <div>
+                  <p className="text-xs uppercase tracking-[0.18em] text-emerald-400 font-semibold">Live access scope</p>
+                  <h3 className="text-xl font-bold text-white mt-1">Assign classes · {assignmentTeacher.name}</h3>
+                  <p className="text-sm text-slate-400 mt-1">Only assigned class/section records become visible in the teacher portal.</p>
+                </div>
+                <button onClick={() => setAssignmentTeacher(null)} className="text-slate-400 hover:text-white"><X className="w-5 h-5" /></button>
+              </div>
+
+              <div className="space-y-2 mb-5">
+                {assignments.filter((a: any) => Number(a.teacher_user_id) === Number(assignmentTeacher.user_id) && a.is_active !== false).length === 0 && (
+                  <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-200">No active class assignment. This teacher currently sees no student roster.</div>
+                )}
+                {assignments.filter((a: any) => Number(a.teacher_user_id) === Number(assignmentTeacher.user_id) && a.is_active !== false).map((a: any) => (
+                  <div key={a.id} className="flex items-center justify-between gap-3 rounded-xl border border-slate-700 bg-slate-900/40 p-3 text-sm">
+                    <span className="text-slate-200">Class {a.class_name}{a.section ? `-${a.section}` : ''}{a.subject ? ` · ${a.subject}` : ''}</span>
+                    <button disabled={assignmentSaving} onClick={() => removeAssignment(Number(a.id))} className="rounded-lg border border-red-500/30 px-3 py-1.5 text-red-300 disabled:opacity-50">Remove</button>
+                  </div>
+                ))}
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <div>
+                  <label className="block text-xs text-slate-400 mb-1">Class / Section</label>
+                  <select value={`${assignmentForm.class_name}||${assignmentForm.section}`} onChange={(e) => { const [class_name, section] = e.target.value.split('||'); setAssignmentForm(prev => ({ ...prev, class_name, section })); }} className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2.5 text-white">
+                    {classOptions.map((opt, idx) => <option key={`${opt.class_name}-${opt.section}-${idx}`} value={`${opt.class_name}||${opt.section}`}>{opt.class_name}{opt.section ? ` - ${opt.section}` : ''}</option>)}
+                  </select>
+                </div>
+                <div className="md:col-span-2">
+                  <label className="block text-xs text-slate-400 mb-1">Subject</label>
+                  <input value={assignmentForm.subject} onChange={(e) => setAssignmentForm(prev => ({ ...prev, subject: e.target.value }))} placeholder="e.g. Mathematics" className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2.5 text-white" />
+                </div>
+              </div>
+              <div className="mt-5 flex justify-end gap-3">
+                <button onClick={() => setAssignmentTeacher(null)} className="rounded-xl border border-slate-700 px-4 py-2.5 text-slate-300">Close</button>
+                <button disabled={assignmentSaving || !assignmentTeacher.user_id || !assignmentForm.class_name} onClick={saveAssignment} className="rounded-xl bg-emerald-600 px-5 py-2.5 font-semibold text-white disabled:opacity-50">{assignmentSaving ? 'Saving...' : 'Add assignment'}</button>
               </div>
             </motion.div>
           </div>

@@ -61,7 +61,10 @@ async function handler(req: NextRequest, { params }: { params: Promise<{ path: s
   const { path } = await params;
   const targetPath = path.join('/');
   // Protect one-time credential issuance against cross-origin browser requests.
-  if (targetPath === 'auth/users/provision-one' && req.method === 'POST') {
+  if ((targetPath === 'auth/users/provision-one' && req.method === 'POST') ||
+      (targetPath === 'auth/users/guardian-contact' && req.method === 'PATCH') ||
+      (targetPath === 'auth/users/resolve-distinct-guardian' && req.method === 'POST') ||
+      (targetPath.startsWith('auth/users/pending-activation/') && req.method === 'POST')) {
     const origin = req.headers.get('origin');
     if (origin && origin !== req.nextUrl.origin) {
       return NextResponse.json({ success: false, message: 'Origin not allowed.' }, { status: 403 });

@@ -1,6 +1,7 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  distDir: process.env.NEXT_DIST_DIR || ".next",
   images: {
     unoptimized: true,
   },
@@ -38,7 +39,12 @@ const nextConfig: NextConfig = {
       },
       {
         source: "/saas-admin",
-        destination: "/admin",
+        destination: "https://app.assps.edu.pk/saas-admin",
+        permanent: false,
+      },
+      {
+        source: "/saas-admin/:path*",
+        destination: "https://app.assps.edu.pk/saas-admin/:path*",
         permanent: false,
       },
       {

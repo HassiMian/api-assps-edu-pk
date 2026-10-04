@@ -1341,6 +1341,7 @@
 :global(.apex-mobile-drawer[data-open="false"]) {
   opacity: 0;
   pointer-events: none;
+  visibility: hidden;
   transform: translateX(calc(100% + 1rem));
 }
 

@@ -35,6 +35,56 @@ const DEFAULT_ACADEMIC = {
   ],
 }
 
+const CLASS_LEVEL_ALIASES = {
+  starter: ['starter', 'playgroup', 'play-group', 'play group', 'pg'],
+  mover: ['mover', 'nursery'],
+  flyer: ['flyer', 'prep', 'kg'],
+  'pre-nine': ['pre-nine', 'pre nine', 'prenine', '9', '10', 'nine', 'ten', 'class 9', 'class 10'],
+  hifaz: ['hifaz', 'hifaz class', 'hifz'],
+}
+
+const CLASS_LEVEL_LABELS = {
+  starter: 'Starter',
+  mover: 'Mover',
+  flyer: 'Flyer',
+  '1': 'One',
+  '2': 'Two',
+  '3': 'Three',
+  '4': 'Four',
+  '5': 'Five',
+  '6': 'Six',
+  '7': 'Seven',
+  '8': 'Eight',
+  '9': 'Class 9',
+  '10': 'Class 10',
+  'pre-nine': 'Pre Nine',
+  hifaz: 'Hifaz Class',
+}
+
+function normalizeClassLevel(value) {
+  const clean = String(value || '').trim().toLowerCase()
+  if (!clean) return ''
+  const classNumber = clean.match(/^class\s+([1-9]|10)$/)
+  if (classNumber) return classNumber[1]
+  const byLabel = Object.entries(CLASS_LEVEL_LABELS).find(([, label]) => String(label).trim().toLowerCase() === clean)
+  if (byLabel) return byLabel[0]
+  const aliasHit = Object.entries(CLASS_LEVEL_ALIASES).find(([, aliases]) => aliases.includes(clean))
+  if (aliasHit) return aliasHit[0]
+  return clean
+}
+
+export function classLevelsMatch(a, b) {
+  if (!a || !b) return true
+  const left = [normalizeClassLevel(a), ...(CLASS_LEVEL_ALIASES[normalizeClassLevel(a)] || [])].map(normalizeClassLevel)
+  const right = [normalizeClassLevel(b), ...(CLASS_LEVEL_ALIASES[normalizeClassLevel(b)] || [])].map(normalizeClassLevel)
+  return left.some(level => right.includes(level))
+}
+
+export function classLevelLabel(value) {
+  const canonical = normalizeClassLevel(value)
+  return CLASS_LEVEL_LABELS[canonical] || String(value || '')
+}
+
 function load() {
   try {
     if (typeof window === 'undefined') return DEFAULT_ACADEMIC

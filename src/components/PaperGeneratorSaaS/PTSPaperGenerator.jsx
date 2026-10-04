@@ -1,22 +1,55 @@
+'use client'
 // PTSPaperGenerator.jsx — PTS clone, dark SaaS theme
-import { useEffect, useState, useRef } from 'react'
-import Portal from '../../components/Portal'
+import { useEffect, useState, useRef, useMemo } from 'react'
+import Portal from '@/components/Portal'
 import { SYLLABI, CLASSES, SUBJECTS, CHAPTERS, QUESTIONS } from './data/questionBank'
 import { usePaperStore } from './usePaperStore'
-import { useAcademicStore } from '../../services/useAcademicStore'
+import {
+  exportCanvasAsDocx,
+  exportPaperAsDocx,
+  exportAnswerKeyAsDocx,
+  printAnswerKeyDocument,
+  generatePaperSets,
+  describePaperSetStrategy,
+  printPaperSets,
+  printMarkingSchemeDocument,
+  exportMarkingSchemeAsDocx,
+  sharePaperViaWhatsApp,
+  sharePaperAsPdf,
+  sharePaperPackage,
+  mergeAiAnswersIntoPaper,
+} from './paperExportUtils'
+import { generateModelAnswers } from './geminiService'
+import EditorCanvasShell from './editor/EditorCanvasShell'
+import {
+  DEFAULT_LOGO,
+  resolveLogo,
+  calcPaperTotal,
+  renderPaperSections,
+  Logo,
+  usePaperLayout,
+  resolveUrduFont,
+  editablePaperProps,
+  paperTextFlow,
+} from './paperTemplateCore'
+import { PREMIUM_TEMPLATE_COMPONENTS, PREMIUM_TEMPLATE_PICKER } from './templates/premium/PremiumTemplates'
+import { CLASSIC_TEMPLATES } from './templatePickerData'
+import TemplateGalleryModal from './TemplateGalleryModal'
+import { classLevelLabel, classLevelsMatch, useAcademicStore } from '@/services/useAcademicStore'
 
-function normalizeClassToken(value='') {
- return String(value || '').trim().toLowerCase().replace(/^class\s*/,'')
-}
-
-function classLevelsMatch(a='', b='') {
- return normalizeClassToken(a) === normalizeClassToken(b)
-}
-
-function classLevelLabel(value='') {
- const token = String(value || '').trim()
- if (!token) return ''
- return /^class\s+/i.test(token) ? token : `Class ${token}`
+/** Map SaaS academic-subject ids to built-in questionBank subject ids for chapters/questions. */
+function resolveStaticSubjectId(subjectId, syllabusId = 'ptb') {
+  if (!subjectId || subjectId.startsWith('store:')) return subjectId
+  if (!subjectId.startsWith('academic-subject:')) return subjectId
+  const level = subjectId.split(':')[1]
+  const name = subjectId.split(':').slice(2).join(':')
+  const match = SUBJECTS.find((s) => {
+    if (syllabusId && s.syllabusId !== syllabusId) return false
+    const cls = CLASSES.find((c) => c.id === s.classId)
+    if (!cls || cls.level !== level) return false
+    return s.name.toLowerCase() === name.toLowerCase()
+  })
+  return match?.id || subjectId
 }
 
 // Normalize a store question to the template question format
@@ -72,7 +105,213 @@ const watermarkPreviewStyle = (logo, opacity, scale = 1.18) => ({
 
 function PreviewWatermark({ logo, show, opacity, scale }) {
  if (!show || !logo || opacity <= 0) return null
- return <div className="preview-wm" style={watermarkPreviewStyle(logo, opacity, scale)} />
+ return <div className="preview-wm" style={{ ...watermarkPreviewStyle(logo, opacity, scale), zIndex: 0 }} />
+}
+
+function TemplateThumbnail({ template, active, onSelect }) {
+ const thumb = template.thumb || {}
+ const paper = thumb.paper || '#fff'
+ const header = thumb.header || '#1a237e'
+ const accent = thumb.accent || '#1a237e'
+ const logoPos = thumb.logo || 'center'
+ const headerIsBand = thumb.headerBand && header !== paper
+
+ return (
+  <button
+   type="button"
+   onClick={() => onSelect(template.id)}
+   title={template.desc}
+   style={{
+    display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6,
+    padding: '8px 10px', borderRadius: 12, cursor: 'pointer', minWidth: 88,
+    border: `1px solid ${active ? 'rgba(200,153,26,0.65)' : 'rgba(148,163,184,0.22)'}`,
+    background: active ? 'rgba(200,153,26,0.14)' : 'rgba(11,44,77,0.92)',
+    boxShadow: active ? '0 4px 14px rgba(200,153,26,0.25)' : 'none',
+    transition: 'transform 180ms cubic-bezier(0.22,1,0.36,1), opacity 180ms ease-out, box-shadow 180ms ease-out',
+    transform: active ? 'translateY(-1px)' : 'translateY(0)',
+   }}
+  >
+   <div style={{
+    width: 56, height: 72, background: paper, borderRadius: 6, overflow: 'hidden',
+    border: thumb.frame ? `1px solid ${accent}55` : `1px solid ${accent}33`,
+    position: 'relative', boxShadow: '0 2px 8px rgba(0,0,0,0.12)',
+   }}>
+    {thumb.grid && (
+     <>
+      <div style={{ position: 'absolute', top: 3, left: 3, width: 4, height: 4, borderTop: `1px solid ${accent}88`, borderLeft: `1px solid ${accent}88` }} />
+      <div style={{ position: 'absolute', top: 3, right: 3, width: 4, height: 4, borderTop: `1px solid ${accent}88`, borderRight: `1px solid ${accent}88` }} />
+     </>
+    )}
+    {headerIsBand ? (
+     <div style={{ height: 16, background: header, display: 'flex', alignItems: 'center', padding: '0 4px', gap: 3 }}>
+      {logoPos === 'left' && <div style={{ width: 7, height: 7, borderRadius: thumb.seal ? '50%' : 2, background: accent, opacity: 0.9 }} />}
+      <div style={{ flex: 1, height: 2, background: 'rgba(255,255,255,0.55)', borderRadius: 1 }} />
+      {logoPos === 'right' && <div style={{ width: 7, height: 7, borderRadius: 2, background: accent, opacity: 0.9 }} />}
+     </div>
+    ) : header !== paper && !thumb.masthead ? (
+     <div style={{ height: 3, background: header, opacity: 0.9 }} />
+    ) : null}
+    {thumb.masthead && (
+     <div style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 4px 0', gap: 4 }}>
+      <div style={{ width: 8, height: 8, borderRadius: 2, background: accent, opacity: 0.85 }} />
+      <div style={{ flex: 1, display: 'grid', gap: 2, marginTop: 1 }}>
+        <div style={{ height: 2, background: header, borderRadius: 1 }} />
+        <div style={{ height: 2, background: `${accent}44`, borderRadius: 1, width: '70%' }} />
+      </div>
+     </div>
+    )}
+    {logoPos === 'center' && <div style={{ display: 'flex', justifyContent: 'center', marginTop: headerIsBand ? 3 : 6 }}><div style={{ width: 10, height: 10, borderRadius: 2, background: accent, opacity: 0.85 }} /></div>}
+    {logoPos === 'crest' && <div style={{ display: 'flex', justifyContent: 'center', marginTop: 4 }}><div style={{ width: 12, height: 12, borderRadius: '50%', border: `1.5px solid ${accent}`, background: `${accent}22` }} /></div>}
+    {logoPos === 'seal' && <div style={{ position: 'absolute', left: 4, top: headerIsBand ? 18 : 8, width: 10, height: 10, borderRadius: '50%', border: `1px solid ${accent}`, background: `${accent}18` }} />}
+    {logoPos === 'table' && <div style={{ display: 'flex', gap: 2, padding: '4px 3px 0' }}><div style={{ width: 8, height: 8, background: accent, opacity: 0.75, borderRadius: 1 }} /><div style={{ flex: 1, display: 'grid', gap: 2 }}>{[1, 2, 3].map(i => <div key={i} style={{ height: 2, background: `${accent}44`, borderRadius: 1 }} />)}</div></div>}
+    {thumb.goldRule && <div style={{ height: 1, background: '#c8991a', margin: '2px 4px 0', opacity: 0.85 }} />}
+    <div style={{ padding: '4px 5px', display: 'grid', gap: 3, marginTop: logoPos === 'center' || logoPos === 'crest' ? 4 : 2 }}>
+     <div style={{ height: 2, background: accent, opacity: 0.35, borderRadius: 1 }} />
+     <div style={{ height: 2, background: `${accent}22`, borderRadius: 1, width: '85%' }} />
+     <div style={{ height: 2, background: `${accent}22`, borderRadius: 1, width: '70%' }} />
+     {thumb.card && <div style={{ height: 8, border: `1px solid ${accent}33`, borderRadius: 2, marginTop: 2 }} />}
+     {thumb.chip && <div style={{ height: 5, width: '55%', borderRadius: 99, background: `${accent}22`, marginTop: 2 }} />}
+     {!thumb.card && <div style={{ height: 2, background: `${accent}18`, borderRadius: 1, width: '90%' }} />}
+    </div>
+    {thumb.bar && <div style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: 3, background: accent }} />}
+   </div>
+   <span style={{ fontSize: 11, fontWeight: active ? 700 : 600, color: active ? '#e8b420' : '#8892A4', textAlign: 'center', lineHeight: 1.2 }}>{template.label}</span>
+  </button>
+ )
+}
+
+function buildPrintHtml(canvas, opts = {}) {
+ const {
+  showWatermark, logo, watermarkOpacity, watermarkScale, half,
+  bodyFont, urduFont, fontColor, letterSp, engLineH, urdLineH,
+ } = opts
+ const wmBlock = (showWatermark && logo && watermarkOpacity > 0)
+  ? `<div class="print-watermark" style="position:fixed;top:52%;left:50%;transform:translate(-50%,-50%);width:${145 * watermarkScale}mm;height:${145 * watermarkScale}mm;opacity:${watermarkOpacity};z-index:0;pointer-events:none;display:flex;align-items:center;justify-content:center;"><img src="${logo}" style="max-width:100%;max-height:100%;object-fit:contain;" alt="" /></div>`
+  : ''
+ const halfCss = half ? `
+  .half-cut-line{width:100%;max-width:210mm;margin:0 auto;border:none;border-top:2px dashed #666;height:0;position:relative;}
+  .half-cut-line::after{content:'Cut along this line';position:absolute;left:50%;top:-10px;transform:translateX(-50%);background:#fff;padding:0 8px;font-size:9px;color:#666;letter-spacing:0.08em;text-transform:uppercase;}
+  .preview-container.half-sheet{max-height:148.5mm;overflow:hidden;page-break-inside:avoid;}
+  @media print{.half-cut-line{page-break-after:always;border-top:1px dashed #999;}.half-cut-line::after{color:#333;}}
+ ` : ''
+ return `<!DOCTYPE html><html><head><meta charset="UTF-8">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Nastaliq+Urdu:wght@400;700&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{box-sizing:border-box}
+html,body{margin:0;padding:0;background:white;color:${fontColor || '#1a1a1a'};font-family:${bodyFont || 'Arial, sans-serif'};letter-spacing:${letterSp || 0}px}
+@page{size:A4 portrait;margin:4mm}
+body{display:flex;flex-direction:column;align-items:center;width:100%;position:relative}
+.print-watermark{z-index:0}
+body>.print-shell{position:relative;z-index:1;width:100%}
+[contenteditable]{outline:none!important;border:none!important;background:transparent!important}
+table{border-collapse:collapse}
+[data-edit-guide],[data-manual-edit]{border:none!important}
+.preview-container{min-height:auto!important;box-shadow:none!important;margin:0 auto!important;width:100%!important;max-width:210mm!important}
+.preview-wm{display:none!important}
+.half-cut-guide{display:none!important}
+${halfCss}
+</style></head><body>
+${wmBlock}
+<div class="print-shell">${canvas.innerHTML}</div>
+</body></html>`
+}
+
+function parseMarksLabel(text = '') {
+ const raw = String(text).trim()
+ const multiply = raw.match(/\(\s*(\d+(?:\.\d+)?)\s*[×x]\s*(\d+)\s*=\s*(\d+(?:\.\d+)?)\s*\)/i)
+ if (multiply) return { each: Number(multiply[1]), count: Number(multiply[2]), total: Number(multiply[3]) }
+ const marksWord = raw.match(/\(\s*(\d+(?:\.\d+)?)\s*marks?\s*\)/i)
+ if (marksWord) return { each: Number(marksWord[1]), count: 1, total: Number(marksWord[1]) }
+ const plain = raw.match(/\(\s*(\d+(?:\.\d+)?)\s*\)/)
+ if (plain) return { each: Number(plain[1]), count: 1, total: Number(plain[1]) }
+ return null
+}
+
+function syncManualEditsFromCanvas(paper, questionTypes, previewSettings = null) {
+ const root = document.getElementById('paper-canvas')
+ if (!root) return { paper, questionTypes, previewSettings }
+
+ const nextPaper = { ...paper }
+ const nextTypes = questionTypes.map(type => ({ ...type }))
+ const typeIndex = Object.fromEntries(nextTypes.map((type, index) => [type.value, index]))
+ let nextPreviewSettings = previewSettings ? { ...previewSettings } : null
+
+ root.querySelectorAll('[data-pg-edit]').forEach(el => {
+  const kind = el.dataset.pgEdit
+  const typeId = el.dataset.pgType
+  const index = el.dataset.pgIndex
+  const text = el.innerText.replace(/\u00a0/g, ' ').trim()
+  if (!text && kind !== 'school-name' && kind !== 'school-address') return
+
+  if (kind === 'section-label' && typeId && typeIndex[typeId] !== undefined) {
+   const idx = typeIndex[typeId]
+   nextTypes[idx] = { ...nextTypes[idx], label: text, labelUrdu: text }
+   return
+  }
+
+  if (kind === 'section-marks' && typeId) {
+   const parsed = parseMarksLabel(text)
+   if (parsed) nextPaper[`${typeId}_marks`] = parsed.each
+   return
+  }
+
+  if (kind === 'question-text' && typeId && index !== undefined) {
+   const qIndex = Number(index)
+   const bucket = Array.isArray(nextPaper[typeId]) ? [...nextPaper[typeId]] : []
+   const current = bucket[qIndex]
+   if (!current) return
+   bucket[qIndex] = { ...current, en: text, text: text, ur: text }
+   nextPaper[typeId] = bucket
+   return
+  }
+
+  if (kind === 'question-text-en' && typeId && index !== undefined) {
+   const qIndex = Number(index)
+   const bucket = Array.isArray(nextPaper[typeId]) ? [...nextPaper[typeId]] : []
+   const current = bucket[qIndex]
+   if (!current) return
+   bucket[qIndex] = { ...current, en: text, text: text }
+   nextPaper[typeId] = bucket
+   return
+  }
+
+  if (kind === 'question-text-ur' && typeId && index !== undefined) {
+   const qIndex = Number(index)
+   const bucket = Array.isArray(nextPaper[typeId]) ? [...nextPaper[typeId]] : []
+   const current = bucket[qIndex]
+   if (!current) return
+   bucket[qIndex] = { ...current, ur: text, textUrdu: text }
+   nextPaper[typeId] = bucket
+   return
+  }
+
+  if (kind === 'mcq-option' && typeId && index !== undefined) {
+   const qIndex = Number(index)
+   const optKey = el.dataset.pgOptKey
+   const bucket = Array.isArray(nextPaper[typeId]) ? [...nextPaper[typeId]] : []
+   const current = bucket[qIndex]
+   if (!current || !optKey) return
+   const options = (current.options || []).map(opt => {
+    const key = opt.key || opt.label
+    if (key !== optKey) return opt
+    return { ...opt, en: text, ur: text, text: text }
+   })
+   bucket[qIndex] = { ...current, options }
+   nextPaper[typeId] = bucket
+   return
+  }
+
+  if (kind === 'school-name') {
+   nextPreviewSettings = { ...(nextPreviewSettings || {}), schoolName: text }
+   return
+  }
+
+  if (kind === 'school-address') {
+   nextPreviewSettings = { ...(nextPreviewSettings || {}), address: text }
+  }
+ })
+
+ return { paper: nextPaper, questionTypes: nextTypes, previewSettings: nextPreviewSettings }
 }
 
 const themeVars = (mode) => mode === 'light'
@@ -239,12 +478,22 @@ function SyllabusStep({ onSelect }) {
 //  Step 2  Class 
 function ClassStep({ syllabusId, onSelect, onBack }) {
  const { activeClasses } = useAcademicStore()
- const classes = activeClasses.map(c => ({
- id: `academic:${c.level}`,
- level: c.level,
- label: c.name,
- syllabusId,
+ const staticClasses = CLASSES.filter((c) => c.syllabusId === syllabusId).map((c) => ({
+   id: c.id,
+   level: c.level,
+   label: c.label,
+   syllabusId,
  }))
+ const staticLevels = new Set(staticClasses.map((c) => c.level))
+ const academicClasses = activeClasses
+   .filter((c) => !staticLevels.has(c.level))
+   .map((c) => ({
+     id: `academic:${c.level}`,
+     level: c.level,
+     label: c.name,
+     syllabusId,
+   }))
+ const classes = [...staticClasses, ...academicClasses]
  return (
  <div>
  <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:22 }}>
@@ -352,7 +601,7 @@ function SubjectStep({ syllabusId, classId, onSelect, onBack }) {
 }
 
 //  Step 4  Chapters 
-function ChapterStep({ subjectId, selectedChapters, selectedTopics, onChange, onNext, onBack }) {
+function ChapterStep({ subjectId, syllabusId, selectedChapters, selectedTopics, onChange, onNext, onBack }) {
  const isStore = subjectId.startsWith('store:')
  const { questions: storeQs } = usePaperStore()
 
@@ -407,10 +656,10 @@ function ChapterStep({ subjectId, selectedChapters, selectedTopics, onChange, on
  )
  }
 
- const chapters = CHAPTERS.filter(c => c.subjectId === subjectId)
+ const chapters = CHAPTERS.filter(c => c.subjectId === resolveStaticSubjectId(subjectId, syllabusId))
  const allCh = chapters.map(c=>c.id)
  const allTp = chapters.flatMap(c=>c.topics.map(t=>t.id))
- const allSel = allCh.every(id=>selectedChapters.has(id))
+ const allSel = chapters.length > 0 && allCh.every(id=>selectedChapters.has(id))
 
  const toggleAll = () => allSel ? onChange(new Set(), new Set())
  : onChange(new Set(allCh), new Set(allTp))
@@ -482,9 +731,10 @@ const MEDIUMS = [
  { v:'english', l:'ENGLISH MEDIUM' },
 ]
 
-function QuestionPanel({ subjectId, selectedChapters, paper, onPaperChange, onBack, overrideConfig, loadedPaper, uiTheme='dark', onToggleTheme }) {
+function QuestionPanel({ subjectId, syllabusId, selectedChapters, paper, onPaperChange, onBack, overrideConfig, loadedPaper, uiTheme='dark', onToggleTheme }) {
  const isLoaded = !!overrideConfig
  const isStore = !isLoaded && subjectId.startsWith('store:')
+ const bankSubjectId = resolveStaticSubjectId(subjectId, syllabusId)
  const { subjects: storeSubjects, questions: storeQs, savePaper, importPaperQuestionsToBank, getFilteredQuestionTypes, questionTypes: allQuestionTypes, paperSettings } = usePaperStore()
  const storeSubjId = isStore ? subjectId.slice(6) : null
  const storeSubjectInfo = isStore ? storeSubjects.find(s => s.id === storeSubjId) : null
@@ -493,24 +743,41 @@ function QuestionPanel({ subjectId, selectedChapters, paper, onPaperChange, onBa
  ? { name: overrideConfig.subjectName || overrideConfig.subject || '', color: D.gold, emoji: '', edition: '' }
  : isStore
  ? { name: storeSubjectInfo?.name || '', color: D.gold, emoji: '', edition: storeSubjectInfo?.publisher || '' }
- : SUBJECTS.find(s=>s.id===subjectId)
+ : SUBJECTS.find(s=>s.id===bankSubjectId)
  
- let questionTypes = getFilteredQuestionTypes(subject?.name || '')
- // Ensure that any type with active questions is always shown, even if filtered out by subject
- if (paper && allQuestionTypes) {
+ const baseQuestionTypes = useMemo(() => {
+ let types = loadedPaper?.numberedQuestionTypes?.length
+ ? [...loadedPaper.numberedQuestionTypes].sort((a, b) => Number(a.questionNo || 0) - Number(b.questionNo || 0))
+ : getFilteredQuestionTypes(subject?.name || '')
+ if (paper && allQuestionTypes && !loadedPaper?.numberedQuestionTypes?.length) {
  const activeTypes = new Set(allQuestionTypes.filter(t => paper[t.value]?.length > 0).map(t => t.value))
- questionTypes = allQuestionTypes.filter(t => questionTypes.some(qt => qt.value === t.value) || activeTypes.has(t.value))
+ types = allQuestionTypes.filter(t => types.some(qt => qt.value === t.value) || activeTypes.has(t.value))
  }
+ return types
+ }, [loadedPaper, subject?.name, paper, allQuestionTypes])
 
- const [tmpl, setTmpl] = useState('classic')
- const [printMode, setPrintMode] = useState('a4')
- const [language, setLanguage] = useState(()=> overrideConfig?.language || 'english')
+ const [previewTypes, setPreviewTypes] = useState(baseQuestionTypes)
+ const [previewSettings, setPreviewSettings] = useState(() => loadedPaper?.manualPreviewSettings || null)
+ const questionTypes = previewTypes
+
+ useEffect(() => {
+ setPreviewTypes(baseQuestionTypes)
+ }, [baseQuestionTypes])
+
+ useEffect(() => {
+ if (loadedPaper?.manualPreviewSettings) setPreviewSettings(loadedPaper.manualPreviewSettings)
+ }, [loadedPaper])
+
+ const [tmpl, setTmpl] = useState(() => loadedPaper?.printPrefs?.tmpl || 'classic')
+ const [showGallery, setShowGallery] = useState(false)
+ const [printMode, setPrintMode] = useState(() => loadedPaper?.printPrefs?.printMode || 'a4')
+ const [language, setLanguage] = useState(()=> loadedPaper?.printPrefs?.language || overrideConfig?.language || 'english')
  const [paperCode, setPaperCode] = useState(()=> overrideConfig?.paperCode || String(Math.floor(1000+Math.random()*9000)))
  const [timeAllwd, setTimeAllwd] = useState(()=> overrideConfig?.timeAllowed || '30 minutes')
  const [examDate, setExamDate] = useState(()=> overrideConfig?.examDate || new Date().toLocaleDateString('en-GB').replace(/\//g,'-'))
  const [printBub, setPrintBub] = useState(true)
  const [printAns, setPrintAns] = useState(false)
- const [modalOpen, setModalOpen] = useState(true)
+ const [modalOpen, setModalOpen] = useState(() => !(loadedPaper?.numberedQuestionTypes?.length))
 
  const [qType, setQType] = useState(questionTypes[0]?.value || 'mcq')
  const [priority, setPriority] = useState('all')
@@ -530,17 +797,17 @@ function QuestionPanel({ subjectId, selectedChapters, paper, onPaperChange, onBa
  const [engLineH, setEngLineH] = useState(1.5)
  const [urdLineH, setUrdLineH] = useState(2.0)
  const [showAnsLines, setShowAnsLines] = useState(false)
- const [fontColor, setFontColor] = useState('#1a1a1a')
- const [fontFamily, setFontFamily] = useState('')
- const [baseFontSz, setBaseFontSz] = useState(11)
- const [headFontSz, setHeadFontSz] = useState(11)
- const [qBorderStyle, setQBorderStyle] = useState('none')
- const [pageBorder, setPageBorder] = useState('none')
- const [showUrduHeaders, setShowUrduHeaders] = useState(false)
- const [showSectionLine, setShowSectionLine] = useState(false)
- const [showWatermark, setShowWatermark] = useState(false)
- const [watermarkOpacity, setWatermarkOpacity] = useState(0.08)
- const [watermarkScale, setWatermarkScale] = useState(1.18)
+ const [fontColor, setFontColor] = useState(() => loadedPaper?.printPrefs?.fontColor || '#1a1a1a')
+ const [fontFamily, setFontFamily] = useState(() => loadedPaper?.printPrefs?.fontFamily || '')
+ const [baseFontSz, setBaseFontSz] = useState(() => loadedPaper?.printPrefs?.baseFontSz || 11)
+ const [headFontSz, setHeadFontSz] = useState(() => loadedPaper?.printPrefs?.headFontSz || 11)
+ const [qBorderStyle, setQBorderStyle] = useState(() => loadedPaper?.printPrefs?.qBorderStyle || 'none')
+ const [pageBorder, setPageBorder] = useState(() => loadedPaper?.printPrefs?.pageBorder || 'none')
+ const [showUrduHeaders, setShowUrduHeaders] = useState(() => Boolean(loadedPaper?.printPrefs?.showUrduHeaders))
+ const [showSectionLine, setShowSectionLine] = useState(() => Boolean(loadedPaper?.printPrefs?.showSectionLine))
+ const [showWatermark, setShowWatermark] = useState(() => Boolean(loadedPaper?.printPrefs?.showWatermark))
+ const [watermarkOpacity, setWatermarkOpacity] = useState(() => loadedPaper?.printPrefs?.watermarkOpacity ?? 0.08)
+ const [watermarkScale, setWatermarkScale] = useState(() => loadedPaper?.printPrefs?.watermarkScale ?? 1.18)
 
  let subjectName = '', className = ''
  if (isLoaded) {
@@ -550,7 +817,7 @@ function QuestionPanel({ subjectId, selectedChapters, paper, onPaperChange, onBa
  subjectName = storeSubjectInfo?.name || ''
  className = storeSubjectInfo?.classLevel || ''
  } else {
- const subj = SUBJECTS.find(s=>s.id===subjectId)
+ const subj = SUBJECTS.find(s=>s.id===bankSubjectId)
  subjectName = subj?.name || ''
  className = CLASSES.find(c=>c.id===subj?.classId)?.label || ''
  }
@@ -565,26 +832,48 @@ function QuestionPanel({ subjectId, selectedChapters, paper, onPaperChange, onBa
     classLevel: className,
     subject: subjectName
   }
- const TemplateComp = {
+ const TemplateComp = ({
  classic: ClassicTemplate,
- academic: AcademicClassicTemplate,
  'docx-assessment': DocxAssessmentTemplate,
- modern: ModernTemplate,
- elite: EliteTemplate,
- emerald: EmeraldTemplate,
- 'royal-elite': (props) => <EliteTemplate {...props} fontFamily={props.fontFamily || "'Garamond', 'Georgia', serif"} />,
- 'board-blue': (props) => <ModernTemplate {...props} qBorderStyle={props.qBorderStyle === 'none' ? 'table' : props.qBorderStyle} />,
- 'compact-classic': (props) => <ClassicTemplate {...props} baseFontSz={Math.max(9, (props.baseFontSz || 11) - 1)} headFontSz={Math.max(9, (props.headFontSz || 11) - 1)} />,
- 'serif-gold': (props) => <EliteTemplate {...props} fontFamily={props.fontFamily || "'Book Antiqua', 'Georgia', serif"} />,
- 'clean-minimal': (props) => <ModernTemplate {...props} fontFamily={props.fontFamily || "'Calibri', 'Arial', sans-serif"} />,
- 'exam-grid': (props) => <AcademicClassicTemplate {...props} qBorderStyle="table" />,
- 'scholar-classic': (props) => <ClassicTemplate {...props} fontFamily={props.fontFamily || "'Cambria', 'Times New Roman', serif"} />,
- }[tmpl]
+ oxford: OxfordTemplate,
+ cambridge: CambridgeTemplate,
+ institutional: InstitutionalTemplate,
+ board: BoardStandardTemplate,
+ ...PREMIUM_TEMPLATE_COMPONENTS,
+ }[tmpl]) || ClassicTemplate
  const half = printMode === 'half'
  const totalQs = questionTypes.reduce((sum, t) => sum + (paper[t.value]?.length || 0), 0)
+ const effectiveSettings = {
+  ...paperSettings,
+  logo: resolveLogo(paperSettings),
+  schoolName: previewSettings?.schoolName || paperSettings?.schoolName,
+  address: previewSettings?.address || paperSettings?.address,
+  website: previewSettings?.website || paperSettings?.website || 'assps.edu.pk',
+  contact: previewSettings?.contact || paperSettings?.contact || '03XX-XXXXXXX',
+ }
+ const usingDefaultLogo = !paperSettings?.logo
+
+ function applyManualEdits() {
+  const synced = syncManualEditsFromCanvas(paper, previewTypes, previewSettings)
+  onPaperChange(synced.paper)
+  setPreviewTypes(synced.questionTypes)
+  if (synced.previewSettings) setPreviewSettings(synced.previewSettings)
+  return synced
+ }
+
+ function toggleEditMode() {
+  if (editMode) applyManualEdits()
+  setEditMode(prev => !prev)
+ }
+
+ useEffect(() => {
+   if (loadedPaper?.numberedQuestionTypes?.length && totalQs > 0) {
+     setModalOpen(false)
+   }
+ }, [loadedPaper, totalQs])
  const pageBorderMap = { none: 'none', thin: '1px solid #111', thick: '3px solid #111', double: '4px double #111' }
  const pageBorderStyle = pageBorderMap[pageBorder] || 'none'
- const tplProps = { paper, cfg, printBubble:printBub, printAns, half, editMode, letterSp, engLineH, urdLineH, showAnsLines, fontColor, fontFamily, baseFontSz, headFontSz, qBorderStyle, showUrduHeaders, showSectionLine, questionTypes, settings: paperSettings, pbStyle: pageBorderStyle }
+ const tplProps = { paper, cfg, printBubble:printBub, printAns, half, editMode, letterSp, engLineH, urdLineH, showAnsLines, fontColor, fontFamily, baseFontSz, headFontSz, qBorderStyle, showUrduHeaders, showSectionLine, questionTypes, settings: effectiveSettings, urduFont: resolveUrduFont(effectiveSettings), pbStyle: pageBorderStyle }
 
  function doSearch() {
  const addedIds = new Set((paper[qType]||[]).map(q=>q.id))
@@ -624,18 +913,28 @@ function QuestionPanel({ subjectId, selectedChapters, paper, onPaperChange, onBa
 
  function doSave() {
  if (!totalQs) return
+ const synced = applyManualEdits()
+ const savePaperState = synced.paper
+ const saveTypes = synced.questionTypes
  const name = `${subjectName} ${className} — ${new Date().toLocaleDateString('en-GB')}`
  const selectedQuestions = {}
- questionTypes.forEach(t => { selectedQuestions[t.value] = { questions: paper[t.value] || [], marks: paper[`${t.value}_marks`] || t.marks || 1 } })
+ saveTypes.forEach(t => { selectedQuestions[t.value] = { questions: savePaperState[t.value] || [], marks: savePaperState[`${t.value}_marks`] || t.marks || 1 } })
  const saved = savePaper({ 
        name, 
        config: cfg, 
-       ...paper, 
-       selectedMCQ: paper.mcq || [],
-       selectedShort: paper.short || [],
-       selectedLong: paper.long || [],
-       selectedQuestions, 
-       teacherHidden: overrideConfig?.teacherHidden || false 
+       ...savePaperState, 
+       selectedMCQ: savePaperState.mcq || [],
+       selectedShort: savePaperState.short || [],
+       selectedLong: savePaperState.long || [],
+       selectedQuestions,
+       numberedQuestionTypes: loadedPaper?.numberedQuestionTypes?.length ? saveTypes : undefined,
+       manualPreviewSettings: synced.previewSettings || previewSettings || undefined,
+       printPrefs: { tmpl, printMode, language, fontFamily, fontColor, baseFontSz, headFontSz, qBorderStyle, pageBorder, showWatermark, watermarkOpacity, watermarkScale, showUrduHeaders, showSectionLine },
+       paperSource: loadedPaper?.paperSource || overrideConfig?.paperSource || 'paper-studio',
+       sourceTab: loadedPaper?.sourceTab || overrideConfig?.sourceTab || 'build',
+       structureMode: loadedPaper?.structureMode || overrideConfig?.structureMode,
+       templatePreset: loadedPaper?.templatePreset || overrideConfig?.templatePreset || tmpl,
+       teacherHidden: overrideConfig?.teacherHidden || false,
      })
   if (!saved) return // Failed due to quota exceeded
   
@@ -649,9 +948,9 @@ function QuestionPanel({ subjectId, selectedChapters, paper, onPaperChange, onBa
   importPaperQuestionsToBank({
   subjectId: loadedPaper?.questionBankSubjectId || overrideConfig?.questionBankSubjectId || '',
   subjectMeta: questionBankMeta,
-  selectedMCQ: paper.mcq || [],
-  selectedShort: paper.short || [],
-  selectedLong: paper.long || [],
+  selectedMCQ: savePaperState.mcq || [],
+  selectedShort: savePaperState.short || [],
+  selectedLong: savePaperState.long || [],
   selectedQuestions,
   medium: loadedPaper?.config?.language || loadedPaper?.config?.medium || overrideConfig?.language || overrideConfig?.medium || 'english',
   source: loadedPaper?.paperSource || overrideConfig?.paperSource || 'paper',
@@ -661,6 +960,7 @@ function QuestionPanel({ subjectId, selectedChapters, paper, onPaperChange, onBa
  }
 
  function doPrint() {
+ if (editMode) applyManualEdits()
  const canvas = document.getElementById('paper-canvas')
  if (!canvas) return
  const old = document.getElementById('__print_frame')
@@ -670,14 +970,177 @@ function QuestionPanel({ subjectId, selectedChapters, paper, onPaperChange, onBa
  iframe.style.cssText = 'position:fixed;top:0;left:-9999px;width:210mm;height:297mm;border:0;background:white'
  document.body.appendChild(iframe)
  const doc = iframe.contentDocument || iframe.contentWindow.document
+ const bodyFont = resolveBodyFont(fontFamily, 'Arial, sans-serif')
  doc.open()
- const wmCss = (showWatermark && paperSettings?.logo && watermarkOpacity > 0) ? `body::before { content: ""; position: fixed; top: 52%; left: 50%; transform: translate(-50%, -50%); width: ${145 * watermarkScale}mm; height: ${145 * watermarkScale}mm; background-image: url('${paperSettings.logo}'); background-repeat: no-repeat; background-position: center; background-size: contain; opacity: ${watermarkOpacity}; z-index: 0; pointer-events: none; } body > * { position: relative; z-index: 1; } .preview-wm { display: none !important; }` : ''
- doc.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><link href="https://fonts.googleapis.com/css2?family=Noto+Nastaliq+Urdu:wght@400;700&display=swap" rel="stylesheet"><style>*,*::before,*::after{box-sizing:border-box}html,body{margin:0;padding:0;background:white}@page{size:A4 portrait;margin:4mm}body{display:flex;flex-direction:column;align-items:center;width:100%}[contenteditable]{outline:none!important;border:none!important;background:transparent!important}table{border-collapse:collapse}[data-edit-guide]{border:none!important}hr{display:block}.preview-container{min-height:auto!important;box-shadow:none!important;margin:0!important;width:100%!important}${wmCss}</style></head><body>${canvas.innerHTML}</body></html>`)
+ doc.write(buildPrintHtml(canvas, {
+  showWatermark,
+  logo: effectiveSettings.logo,
+  watermarkOpacity,
+  watermarkScale,
+  half,
+  bodyFont,
+  urduFont: resolveUrduFont(effectiveSettings),
+  fontColor,
+  letterSp,
+  engLineH,
+  urdLineH,
+ }))
  doc.close()
  setTimeout(() => {
  try { iframe.contentWindow.focus(); iframe.contentWindow.print() } catch(e) { console.error('iframe print failed:', e) }
  setTimeout(() => { if (document.body.contains(iframe)) iframe.remove() }, 3000)
  }, 1200)
+ }
+
+ function doExportDocx() {
+ if (editMode) applyManualEdits()
+ const canvas = document.getElementById('paper-canvas')
+ const exportName = `${subjectName || 'Paper'}_Class${className || ''}`
+ if (canvas) {
+  exportCanvasAsDocx(canvas, exportName)
+  return
+ }
+ const synced = applyManualEdits()
+ const payload = {
+  name: exportName,
+  config: cfg,
+  ...synced.paper,
+  numberedQuestionTypes: synced.questionTypes,
+  manualPreviewSettings: synced.previewSettings || previewSettings,
+  printPrefs: { tmpl, printMode, language, fontFamily, fontColor, baseFontSz, headFontSz, qBorderStyle, pageBorder, showWatermark, watermarkOpacity, watermarkScale, showUrduHeaders, showSectionLine },
+ }
+ exportPaperAsDocx(payload, effectiveSettings, exportName)
+ }
+
+ function doPrintAnswerKey() {
+ if (editMode) applyManualEdits()
+ const synced = applyManualEdits()
+ printAnswerKeyDocument({
+  name: `${subjectName} ${className}`,
+  config: cfg,
+  ...synced.paper,
+  numberedQuestionTypes: synced.questionTypes,
+  manualPreviewSettings: synced.previewSettings || previewSettings,
+  printPrefs: { language },
+ }, synced.questionTypes, effectiveSettings, cfg)
+ }
+
+ function doExportAnswerKeyDocx() {
+ if (editMode) applyManualEdits()
+ const synced = applyManualEdits()
+ exportAnswerKeyAsDocx({
+  name: `${subjectName} ${className}`,
+  config: cfg,
+  ...synced.paper,
+  numberedQuestionTypes: synced.questionTypes,
+  manualPreviewSettings: synced.previewSettings || previewSettings,
+  printPrefs: { language },
+ }, synced.questionTypes, effectiveSettings, cfg)
+ }
+
+ function doGeneratePaperSets() {
+ if (!totalQs) return
+ if (editMode) applyManualEdits()
+ const synced = applyManualEdits()
+ const basePaper = {
+  name: `${subjectName} ${className}`,
+  config: cfg,
+  ...synced.paper,
+  numberedQuestionTypes: synced.questionTypes,
+  manualPreviewSettings: synced.previewSettings || previewSettings,
+  printPrefs: { tmpl, printMode, language, fontFamily, fontColor, baseFontSz, headFontSz, qBorderStyle, pageBorder, showWatermark, watermarkOpacity, watermarkScale, showUrduHeaders, showSectionLine },
+  paperSource: loadedPaper?.paperSource,
+  sourceTab: loadedPaper?.sourceTab,
+ }
+ const sets = generatePaperSets(basePaper, 3)
+ printPaperSets(sets, effectiveSettings)
+ }
+
+ async function doFillModelAnswersAI() {
+ if (!totalQs) return
+ if (editMode) applyManualEdits()
+ const synced = applyManualEdits()
+ const rows = synced.questionTypes.map(type => {
+  const item = (synced.paper[type.value] || [])[0] || {}
+  return {
+    id: item.id || type.value,
+    questionNo: type.questionNo,
+    prompt: type.label,
+    text: item.en || item.text || '',
+    marks: synced.paper[`${type.value}_marks`] || type.marks || 1,
+    type: type.value,
+    answer: item.answer || '',
+  }
+ }).filter(row => String(row.text || row.prompt || '').trim())
+ const pending = rows.filter(row => !String(row.answer || '').trim())
+ if (!pending.length) {
+  alert('All questions already have model answers.')
+  return
+ }
+ try {
+  const { answers } = await generateModelAnswers({
+    classLevel: className,
+    subject: subjectName,
+    medium: language,
+    chapters: loadedPaper?.config?.chapters || '',
+  }, pending)
+  const nextPaper = mergeAiAnswersIntoPaper(synced.paper, synced.questionTypes, answers)
+  onPaperChange(nextPaper)
+  alert(`AI filled ${answers.length} model answer(s). Use Answer Key or Marking Scheme to export.`)
+ } catch (error) {
+  alert(error?.response?.data?.message || error?.message || 'AI answer fill failed.')
+ }
+ }
+
+ function doMarkingScheme() {
+ if (editMode) applyManualEdits()
+ const synced = applyManualEdits()
+ printMarkingSchemeDocument({
+  name: `${subjectName} ${className}`,
+  config: cfg,
+  ...synced.paper,
+  numberedQuestionTypes: synced.questionTypes,
+  manualPreviewSettings: synced.previewSettings || previewSettings,
+  printPrefs: { language },
+ }, synced.questionTypes, effectiveSettings, cfg)
+ }
+
+ function doShareWhatsapp() {
+ if (editMode) applyManualEdits()
+ const synced = applyManualEdits()
+ sharePaperViaWhatsApp({
+  name: `${subjectName} ${className}`,
+  config: cfg,
+  ...synced.paper,
+  numberedQuestionTypes: synced.questionTypes,
+  manualPreviewSettings: synced.previewSettings || previewSettings,
+ }, effectiveSettings)
+ }
+
+ function doSharePdf() {
+ if (editMode) applyManualEdits()
+ const synced = applyManualEdits()
+ sharePaperAsPdf({
+  name: `${subjectName} ${className}`,
+  config: cfg,
+  ...synced.paper,
+  numberedQuestionTypes: synced.questionTypes,
+  manualPreviewSettings: synced.previewSettings || previewSettings,
+  printPrefs: { tmpl, language },
+ }, effectiveSettings)
+ }
+
+ async function doSharePackage() {
+ if (editMode) applyManualEdits()
+ const synced = applyManualEdits()
+ await sharePaperPackage({
+  name: `${subjectName} ${className}`,
+  config: cfg,
+  ...synced.paper,
+  numberedQuestionTypes: synced.questionTypes,
+  manualPreviewSettings: synced.previewSettings || previewSettings,
+  printPrefs: { tmpl, language },
+ }, effectiveSettings, synced.questionTypes)
  }
 
  const tinp = { background:'rgba(11,44,77,0.6)', border:`1px solid ${D.border}`, borderRadius:8, color:D.silver, padding:'7px 10px', fontSize:12, outline:'none', boxSizing:'border-box', border: pageBorderStyle }
@@ -686,11 +1149,21 @@ function QuestionPanel({ subjectId, selectedChapters, paper, onPaperChange, onBa
 
  return (
  <div className="pts-generator-surface" style={{ display:'flex', flexDirection:'column', height:'calc(100vh - 120px)', position:'relative', ...themeVars(uiTheme) }}>
+ <TemplateGalleryModal open={showGallery} activeId={tmpl} onClose={() => setShowGallery(false)} onSelect={setTmpl} />
  <style>{`.pts-generator-surface select option, .pts-generator-surface select optgroup { background: var(--pg-option-bg, #0a1e35); color: var(--pg-option-text, #e6eef8); }`}</style>
  <div style={{ background:'var(--pg-toolbar, rgba(7,25,48,0.97))', backdropFilter:blur, borderBottom:`1px solid ${D.border}`, padding:'12px 20px', flexShrink:0 }}>
- <div style={{ display:'flex', gap:8, marginBottom:12, flexWrap:'wrap', alignItems:'center' }}>
- {TEMPLATES.map(t=>(<button key={t.id} onClick={()=>setTmpl(t.id)} style={{ padding:'9px 18px', borderRadius:10, border:'none', cursor:'pointer', fontWeight: 600, fontSize:13, transition:'all .15s', background: tmpl===t.id ? `linear-gradient(135deg,${D.gold},${D.goldL})` : 'rgba(11,44,77,0.92)', color: tmpl===t.id ? '#071e34' : D.muted, boxShadow: tmpl===t.id ? `0 4px 14px rgba(200,153,26,0.3)` : 'none', }}>{t.label}</button>))}
+ <div style={{ display:'flex', gap:10, marginBottom:12, flexWrap:'wrap', alignItems:'flex-end' }}>
+ <div style={{ width:'100%', fontSize:10, fontWeight:700, letterSpacing:'0.14em', textTransform:'uppercase', color:D.muted, marginBottom:4 }}>Classic Templates</div>
+ {CLASSIC_TEMPLATES.map(t => <TemplateThumbnail key={t.id} template={t} active={tmpl === t.id} onSelect={setTmpl} />)}
+ <div style={{ width:'100%', fontSize:10, fontWeight:700, letterSpacing:'0.14em', textTransform:'uppercase', color:D.gold, marginTop:6, marginBottom:4 }}>Premium Institutional — 10 Designs</div>
+ {PREMIUM_TEMPLATE_PICKER.map(t => <TemplateThumbnail key={t.id} template={t} active={tmpl === t.id} onSelect={setTmpl} />)}
+ {loadedPaper?.templatePreset && tmpl === loadedPaper.templatePreset && (
+ <span style={{ fontSize: 11, color: D.green, fontWeight: 600, alignSelf: 'center', padding: '4px 8px', borderRadius: 8, background: 'rgba(48,209,88,0.1)' }}>
+ Auto-selected for {overrideConfig?.subjectName || overrideConfig?.subject || 'this subject'}
+ </span>
+ )}
  <div style={{ marginLeft:'auto', display:'flex', gap:8, alignItems:'center' }}>
+ <button type="button" onClick={() => setShowGallery(true)} style={{ padding:'8px 14px', borderRadius:9, border:`1px solid rgba(200,153,26,0.45)`, cursor:'pointer', fontWeight:700, fontSize:12, background:'rgba(200,153,26,0.12)', color:D.gold }}>Browse Gallery</button>
  <ThemeToggle mode={uiTheme} onToggle={onToggleTheme} />
  {PRINT_MODES.map(m=>(<button key={m.id} onClick={()=>setPrintMode(m.id)} style={{ padding:'8px 16px', borderRadius:9, border:`1px solid ${D.border}`, cursor:'pointer', fontWeight:600, fontSize:12, transition:'all .15s', background: printMode===m.id ? `rgba(48,209,88,0.15)` : 'rgba(15,23,42,0.46)', color: printMode===m.id ? D.green : D.muted, borderColor: printMode===m.id ? `rgba(48,209,88,0.4)` : D.border, }}>{printMode===m.id?' ':' '}{m.label}</button>))}
  </div>
@@ -713,11 +1186,19 @@ function QuestionPanel({ subjectId, selectedChapters, paper, onPaperChange, onBa
  <DBtn color="ghost" onClick={onBack} style={{ padding:'8px 14px', fontSize:12 }}>← Back</DBtn>
  <button onClick={()=>setModalOpen(true)} style={{ background:`linear-gradient(135deg,#0A84FF,#0055cc)`, color:'white', border:'none', borderRadius:10, padding:'8px 18px', fontWeight: 600, fontSize:13, cursor:'pointer', display:'flex', alignItems:'center', gap:7, }}> Question Menu {totalQs > 0 && (<span style={{ background:'rgba(255,255,255,0.25)', borderRadius:9, padding:'1px 8px', fontSize:11, fontWeight: 600 }}>{totalQs}</span>)}</button>
  <DBtn color="green" onClick={doSave} disabled={!totalQs} style={{ padding:'8px 16px', fontSize:13 }}> Save</DBtn>
+ <DBtn color="ghost" onClick={doExportDocx} disabled={!totalQs} style={{ padding:'8px 14px', fontSize:12 }}>DOCX</DBtn>
+ <DBtn color="ghost" onClick={doFillModelAnswersAI} disabled={!totalQs} style={{ padding:'8px 14px', fontSize:12 }}>AI Answers</DBtn>
+ <DBtn color="ghost" onClick={doPrintAnswerKey} disabled={!totalQs} style={{ padding:'8px 14px', fontSize:12 }}>Answer Key</DBtn>
+ <DBtn color="ghost" onClick={doMarkingScheme} disabled={!totalQs} style={{ padding:'8px 14px', fontSize:12 }}>Scheme</DBtn>
+ <DBtn color="ghost" onClick={doGeneratePaperSets} disabled={!totalQs} title={describePaperSetStrategy()} style={{ padding:'8px 14px', fontSize:12 }}>Sets A/B/C</DBtn>
+ <DBtn color="ghost" onClick={doSharePdf} disabled={!totalQs} style={{ padding:'8px 14px', fontSize:12 }}>PDF</DBtn>
+ <DBtn color="ghost" onClick={doShareWhatsapp} disabled={!totalQs} style={{ padding:'8px 14px', fontSize:12 }}>WhatsApp</DBtn>
+ <DBtn color="ghost" onClick={doSharePackage} disabled={!totalQs} style={{ padding:'8px 14px', fontSize:12 }}>Share</DBtn>
  <GoldBtn onClick={doPrint} style={{ padding:'8px 20px', fontSize:13 }}> Print</GoldBtn>
  </div>
  </div>
  <div style={{ display:'flex', gap:14, flexWrap:'wrap', alignItems:'center', marginTop:10, paddingTop:10, borderTop:`1px solid ${D.border}` }}>
- <button onClick={()=>setEditMode(p=>!p)} style={{ padding:'6px 14px', borderRadius:9, border:`1px solid ${D.border}`, cursor:'pointer', fontWeight: 600, fontSize:12, background: editMode ? `linear-gradient(135deg,${D.gold},${D.goldL})` : 'rgba(11,44,77,0.92)', color: editMode ? '#071e34' : D.silver, }}>{editMode ? ' Done Edit' : ' Manual Edit'}</button>
+ <button onClick={toggleEditMode} style={{ padding:'6px 14px', borderRadius:9, border:`1px solid ${D.border}`, cursor:'pointer', fontWeight: 600, fontSize:12, background: editMode ? `linear-gradient(135deg,${D.gold},${D.goldL})` : 'rgba(11,44,77,0.92)', color: editMode ? '#071e34' : D.silver, }}>{editMode ? ' Done Edit' : ' Manual Edit'}</button>
  <div style={{ display:'flex', gap:5, alignItems:'center' }}>
  <span style={{ fontSize:11, color:D.muted, fontWeight:600 }}>Letter Sp</span>
  <input type="range" min={0} max={3} step={0.5} value={letterSp} onChange={e=>setLetterSp(Number(e.target.value))} style={{ width:70, accentColor:D.gold }} />
@@ -790,6 +1271,12 @@ function QuestionPanel({ subjectId, selectedChapters, paper, onPaperChange, onBa
  <label style={{ display:'flex', alignItems:'center', gap:5, cursor:'pointer', fontSize:12, color:D.silver }}><input type="checkbox" checked={showSectionLine} onChange={e=>setShowSectionLine(e.target.checked)} style={{ accentColor:D.gold }} />Section Lines</label>
  </div>
  </div>
+ {usingDefaultLogo && (
+ <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:12, marginTop:8, padding:'8px 12px', borderRadius:10, border:`1px solid rgba(200,153,26,0.35)`, background:'rgba(200,153,26,0.08)' }}>
+ <span style={{ fontSize:12, color:D.silver }}>School logo not uploaded — templates are using the default mark. Upload your logo in Question Bank settings for branded papers.</span>
+ <a href="/teacher/question-bank" style={{ fontSize:12, fontWeight:700, color:D.gold, textDecoration:'none', whiteSpace:'nowrap' }}>Upload Logo →</a>
+ </div>
+ )}
  <div id="paper-canvas" style={{ flex:1, overflowY:'auto', background:'var(--pg-canvas, #1e2a3a)', padding:'24px', display:'flex', flexDirection:'column', alignItems:'center', gap: half ? 8 : 0 }}>
  {totalQs === 0 ? (
  <div style={{ flex:1, display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', textAlign:'center', padding:60 }}>
@@ -799,12 +1286,22 @@ function QuestionPanel({ subjectId, selectedChapters, paper, onPaperChange, onBa
  <button onClick={()=>setModalOpen(true)} style={{ marginTop:28, background:`linear-gradient(135deg,#0A84FF,#0055cc)`, color:'white', border:'none', borderRadius:12, padding:'13px 34px', fontWeight: 600, fontSize:16, cursor:'pointer', boxShadow:'0 6px 20px rgba(10,132,255,0.35)', }}> Open Question Menu</button>
  </div>
  ) : half ? (
+ <EditorCanvasShell>
  <>
- <div className="preview-container" style={{ width:794, minHeight:1123, flexShrink:0, background:'white', boxShadow:'0 4px 20px rgba(0,0,0,0.35)', overflowX:'hidden', position: 'relative' }}><PreviewWatermark logo={paperSettings?.logo} show={showWatermark} opacity={watermarkOpacity} scale={watermarkScale} /><TemplateComp {...tplProps} half={true} /></div>
- <div className="preview-container" style={{ width:794, minHeight:1123, flexShrink:0, background:'white', boxShadow:'0 4px 20px rgba(0,0,0,0.35)', overflowX:'hidden', position: 'relative' }}><PreviewWatermark logo={paperSettings?.logo} show={showWatermark} opacity={watermarkOpacity} scale={watermarkScale} /><TemplateComp {...tplProps} half={true} /></div>
+ <div className="preview-container half-sheet" style={{ width:794, minHeight:1123, flexShrink:0, background:'white', boxShadow:'0 4px 20px rgba(0,0,0,0.35)', overflowX:'hidden', position: 'relative' }}><PreviewWatermark logo={effectiveSettings.logo} show={showWatermark} opacity={watermarkOpacity} scale={watermarkScale} /><div style={{ position:'relative', zIndex:2 }}><TemplateComp {...tplProps} half={true} /></div></div>
+ <div className="half-cut-guide" style={{ width:794, flexShrink:0, display:'flex', alignItems:'center', gap:12, padding:'6px 0' }}>
+ <div style={{ flex:1, height:0, borderTop:'2px dashed rgba(148,163,184,0.55)' }} />
+ <span style={{ fontSize:11, fontWeight:700, color:D.muted, letterSpacing:'0.12em', textTransform:'uppercase' }}>Cut here</span>
+ <div style={{ flex:1, height:0, borderTop:'2px dashed rgba(148,163,184,0.55)' }} />
+ </div>
+ <div className="preview-container half-sheet" style={{ width:794, minHeight:1123, flexShrink:0, background:'white', boxShadow:'0 4px 20px rgba(0,0,0,0.35)', overflowX:'hidden', position: 'relative' }}><PreviewWatermark logo={effectiveSettings.logo} show={showWatermark} opacity={watermarkOpacity} scale={watermarkScale} /><div style={{ position:'relative', zIndex:2 }}><TemplateComp {...tplProps} half={true} /></div></div>
+ <div className="half-cut-line" style={{ width:794, borderTop:'2px dashed #666', margin:'8px 0 0', position:'relative' }} />
  </>
+ </EditorCanvasShell>
  ) : (
- <div className="preview-container" style={{ width:794, minHeight:1123, flexShrink:0, background:'white', boxShadow:'0 4px 24px rgba(0,0,0,0.4)', overflowX:'hidden', position: 'relative' }}><PreviewWatermark logo={paperSettings?.logo} show={showWatermark} opacity={watermarkOpacity} scale={watermarkScale} /><TemplateComp {...tplProps} half={false} /></div>
+ <EditorCanvasShell>
+ <div className="preview-container" style={{ width:794, minHeight:1123, flexShrink:0, background:'white', boxShadow:'0 4px 24px rgba(0,0,0,0.4)', overflowX:'hidden', position: 'relative' }}><PreviewWatermark logo={effectiveSettings.logo} show={showWatermark} opacity={watermarkOpacity} scale={watermarkScale} /><div style={{ position:'relative', zIndex:2 }}><TemplateComp {...tplProps} half={false} /></div></div>
+ </EditorCanvasShell>
  )}
  </div>
  <style>{`@media print { body { display: none !important; } }`}</style>
@@ -891,167 +1388,53 @@ function chunk(arr, size) {
  return res
 }
 
-//  Shared Section Renderer 
-function SectionRenderer({ type, paper, isUrdu, isDual, editMode, editStyle, fs, qFs, qFsSm, qFsHead, qBorderStyle, urdLineH, engLineH, letterSp, printAns, showAnsLines, qn, half, themeColor='#1a237e', urduHeader='' }) {
- const qs = paper[type.value] || []
- if (qs.length === 0) return null
- const marks = paper[`${type.value}_marks`] || type.marks || 1
- const isMcq = type.value === 'mcq'
- 
- function getT(item) {
- const e = item.en || item.text || ''
- const u = item.ur || item.textUrdu || item.text || ''
- return isUrdu ? (u||e) : (isDual && e && u ? e + ' / ' + u : (e||u))
- }
- 
- return (
- <div key={type.value} style={{ marginBottom:`${10*fs}px` }}>
- {urduHeader && <div style={{ textAlign:'center', fontFamily:'Noto Nastaliq Urdu,serif', fontSize:`${14*fs}px`, fontWeight:800, color:'#1a237e', marginBottom:`${5*fs}px`, direction:'rtl' }}>{urduHeader}</div>}
- <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:`${6*fs}px`, paddingBottom:`${4*fs}px`, borderBottom:`2.1px solid ${themeColor}`, direction: isUrdu ? 'rtl' : 'ltr' }}>
- {isUrdu ? (
- <>
- <span style={{ fontWeight:700, fontSize:`${12*fs}px`, fontFamily:'Noto Nastaliq Urdu,serif' }}>سوال نمبر {qn}. {type.labelUrdu}</span>
- <span style={{ fontWeight:700, fontSize:`${10*fs}px`, color:themeColor }}>({marks} × {qs.length} = {qs.length*marks})</span>
- </>
- ) : (
- <>
- <span style={{ fontWeight:800, fontSize:`${12*fs}px`, color:'#333' }}>Q{qn}. {type.label}</span>
- <span style={{ fontWeight:700, fontSize:`${11*fs}px`, color:themeColor }}>({marks} × {qs.length} = {qs.length*marks})</span>
- </>
- )}
- </div>
-
- {isMcq ? (
- qBorderStyle==='table' ? (
- <table style={{ width:'100%', borderCollapse:'collapse', fontSize:`${qFs}px` }}>
- <thead><tr style={{ background:`${themeColor}11` }}>
- <th style={{ border:`1px solid ${themeColor}88`, padding:`${3*fs}px`, textAlign:'center', width:'5%' }}>No.</th>
- <th style={{ border:`1px solid ${themeColor}88`, padding:`${3*fs}px ${5*fs}px` }}>{isUrdu?'سوال':'Question'}</th>
- {['A','B','C','D'].map(l=><th key={l} style={{ border:`1px solid ${themeColor}88`, padding:`${3*fs}px`, textAlign:'center', width:'11%' }}>({l})</th>)}
- </tr></thead>
- <tbody>{qs.map((q,i)=>(
- <tr key={q.id || `${type.value}-row-${i}`}>
- <td style={{ border:`1px solid ${themeColor}88`, padding:`${3*fs}px`, textAlign:'center', fontWeight:700, color:themeColor }}>{i+1}.</td>
- <td style={{ border:`1px solid ${themeColor}88`, padding:`${3*fs}px ${5*fs}px`, direction:isUrdu?'rtl':'ltr', textAlign:isUrdu?'right':'left', fontFamily:isUrdu?'Noto Nastaliq Urdu,serif':'inherit', lineHeight:isUrdu?urdLineH:engLineH }}>
- <span contentEditable={editMode} suppressContentEditableWarning style={editStyle}>{getT(q)}</span>
- </td>
- {q.options?.map((opt, optIndex)=>(
- <td key={opt.key || opt.label || `${type.value}-opt-${i}-${optIndex}`} style={{ border:`1px solid ${themeColor}88`, padding:`${3*fs}px`, textAlign:'center', fontSize:`${qFsSm}px` }}>
- <span contentEditable={editMode} suppressContentEditableWarning style={editStyle}>{getT(opt)}</span>
- {printAns&&opt.correct&&<span style={{color:'#c00',fontWeight:700}}> </span>}
- </td>
- ))}
- </tr>
- ))}</tbody>
- </table>
- ) : (
- qs.map((q,i)=>(
- <div key={q.id || `${type.value}-card-${i}`} style={{ marginBottom:`${8*fs}px`, ...(qBorderStyle==='box'?{border:`1px solid ${themeColor}44`,borderRadius:`${3*fs}px`,padding:`${6*fs}px ${8*fs}px`}:{}) }}>
- <div style={{ fontWeight:700, fontSize:`${qFs}px`, marginBottom:`${3*fs}px`, direction:isUrdu?'rtl':'ltr', textAlign:isUrdu?'right':'left', fontFamily:isUrdu?'Noto Nastaliq Urdu,serif':'inherit', lineHeight:isUrdu?urdLineH:engLineH, letterSpacing:`${letterSp}px` }}>
- <span style={{ color:themeColor }}>{i+1}.</span>{' '}<span contentEditable={editMode} suppressContentEditableWarning style={editStyle}>{getT(q)}</span>
- </div>
- <div style={{ display:'grid', gridTemplateColumns:`repeat(${half?2:4},1fr)`, gap:`${2*fs}px`, paddingLeft:isUrdu?0:`${14*fs}px`, paddingRight:isUrdu?`${14*fs}px`:0 }}>
- {q.options?.map((opt, optIndex)=>(
- <div key={opt.key || opt.label || `${type.value}-choice-${i}-${optIndex}`} style={{ fontSize:`${qFsSm}px`, direction:isUrdu?'rtl':'ltr', fontFamily:isUrdu?'Noto Nastaliq Urdu,serif':'inherit', lineHeight:isUrdu?urdLineH:engLineH, letterSpacing:`${letterSp}px` }}>
- <strong style={{color:themeColor}}>({opt.key || opt.label || String.fromCharCode(65 + optIndex)})</strong>{' '}
- <span contentEditable={editMode} suppressContentEditableWarning style={editStyle}>{getT(opt)}</span>
- {printAns&&opt.correct&&<span style={{color:'#c00',fontWeight:700}}> </span>}
- </div>
- ))}
- </div>
- </div>
- ))
- )
- ) : (
- qBorderStyle==='table' ? (
- <table style={{ width:'100%', borderCollapse:'collapse', fontSize:`${qFs}px` }}>
- <thead><tr style={{ background:`${themeColor}11` }}>
- <th style={{ border:`1px solid ${themeColor}88`, padding:`${3*fs}px`, textAlign:'center', width:'6%' }}>No.</th>
- <th style={{ border:`1px solid ${themeColor}88`, padding:`${3*fs}px ${5*fs}px` }}>{isUrdu?'سوال':'Question'}</th>
- </tr></thead>
- <tbody>{qs.map((q,i)=>(
- <tr key={q.id || `${type.value}-table-${i}`}>
- <td style={{ border:`1px solid ${themeColor}88`, padding:`${5*fs}px`, textAlign:'center', fontWeight:700, color:themeColor, verticalAlign:'top' }}>{i+1}.</td>
- <td style={{ border:`1px solid ${themeColor}88`, padding:`${5*fs}px`, direction:isUrdu?'rtl':'ltr', textAlign:isUrdu?'right':'left', fontFamily:isUrdu?'Noto Nastaliq Urdu,serif':'inherit', lineHeight:isUrdu?urdLineH:engLineH, minHeight:`${20*fs}px` }}>
- <span contentEditable={editMode} suppressContentEditableWarning style={editStyle}>{getT(q)}</span>
- </td>
- </tr>
- ))}</tbody>
- </table>
- ) : (
- <div style={{ display: (type.value==='short'||type.value.includes('short')) ? 'grid' : 'block', gridTemplateColumns: (type.value==='short'||type.value.includes('short')) ? '1fr 1fr' : 'none', gap:`${4*fs}px ${14*fs}px` }}>
- {qs.map((q,i)=>(
- <div key={q.id || `${type.value}-item-${i}`} style={{ fontSize:`${qFs}px`, marginBottom: (type.value==='short'||type.value.includes('short')) ? 0 : `${12*fs}px`, ...(qBorderStyle==='box'?{border:`1px solid ${themeColor}44`,borderRadius:`${3*fs}px`,padding: (type.value==='short'||type.value.includes('short')) ? `${5*fs}px ${7*fs}px` : `${6*fs}px ${8*fs}px`}:{}) }}>
- <div style={{ fontWeight: (type.value==='short'||type.value.includes('short')) ? 600 : 700, direction:isUrdu?'rtl':'ltr', textAlign:isUrdu?'right':'left', fontFamily:isUrdu?'Noto Nastaliq Urdu,serif':'inherit', lineHeight:isUrdu?urdLineH:engLineH, letterSpacing:`${letterSp}px` }}>
- <span style={{ color:themeColor, fontWeight: 600 }}>{i+1}.</span>{' '}<span contentEditable={editMode} suppressContentEditableWarning style={editStyle}>{getT(q)}</span>
- </div>
- {showAnsLines && ((type.value==='short'||type.value.includes('short')) ? (
- <div style={{ borderBottom:`1px solid ${themeColor}44`, marginTop:`${4*fs}px`, marginBottom:`${4*fs}px`, height:`${14*fs}px` }} />
- ) : (
- [...Array(6)].map((_,li)=>(
- <div key={li} style={{ borderBottom:`1px solid ${themeColor}22`, height:`${20*fs}px` }} />
- ))
- ))}
- </div>
- ))}
- </div>
- )
- )}
- </div>
- )
+function buildPaperFromLoaded(loadedPaper, fallbackTypes = []) {
+  if (!loadedPaper) return null
+  const p = { ...loadedPaper }
+  const initTypes = loadedPaper.numberedQuestionTypes?.length
+    ? [...loadedPaper.numberedQuestionTypes].sort((a, b) => Number(a.questionNo || 0) - Number(b.questionNo || 0))
+    : (Array.isArray(fallbackTypes) ? fallbackTypes : [])
+  if (!initTypes.length) return p
+  initTypes.forEach(t => {
+    const savedCategory = loadedPaper.selectedQuestions?.[t.value]
+    const savedQuestions = Array.isArray(savedCategory)
+      ? savedCategory
+      : (Array.isArray(savedCategory?.questions) ? savedCategory.questions : [])
+    p[t.value] = loadedPaper[t.value]?.length ? loadedPaper[t.value] : (savedQuestions.length ? savedQuestions : (p[t.value] || []))
+    p[`${t.value}_marks`] = Number(
+      loadedPaper[`${t.value}_marks`]
+      || savedCategory?.marks
+      || t.marks
+      || 1,
+    )
+  })
+  return p
 }
 
-function Logo({ size=50, src=null }) {
- if (src) {
- return (
- <img
- src={src}
- style={{ width: size, height: size, objectFit: 'contain', display: 'block', margin: '0 auto', background: '#fff', borderRadius: '50%', padding: '2px' }}
- alt="logo"
- />
- )
- }
- return (<div style={{ width:size, height:size, borderRadius:'50%', background:'#1a237e', display:'grid', placeItems:'center', color:'white', fontWeight:900, fontSize:size*0.45 }}>AS</div>)
-}
-
-function editablePaperProps(edit) { return edit ? { 'data-manual-edit': 'true' } : {} }
-
-function paperTextFlow({ isUrdu, engLineH, urdLineH, letterSp }) {
- return { lineHeight: isUrdu ? urdLineH : engLineH, letterSpacing: `${letterSp}px` }
-}
-
-//  Template 1: AS Classic (exact PDF replica) 
+//  Template 1: AS Classic
 function ClassicTemplate({ paper, cfg, printBubble, printAns, half, editMode=false, letterSp=0, engLineH=1.5, urdLineH=2.0, showAnsLines=false, fontColor='#1a1a1a', fontFamily='', baseFontSz=11, headFontSz=11, qBorderStyle='none', showUrduHeaders=false, showSectionLine=false, questionTypes=[], settings, pbStyle }) {
- const total = questionTypes.reduce((sum, t) => sum + (paper[t.value]?.length || 0) * (paper[`${t.value}_marks`] || t.marks || 1), 0)
- const isUrdu = cfg.language === 'urdu'
- const isDual = cfg.language === 'dual'
+ const total = calcPaperTotal(paper, questionTypes)
+ const { isUrdu, isDual, fs, hFs, bodyFont, wrap, qFs, qFsSm, qFsHead } = usePaperLayout({ half, baseFontSz, headFontSz, fontFamily, templateDefaultFont: 'Arial, sans-serif', fontColor, cfg, pbStyle, engLineH, urdLineH, letterSp })
  const editStyle = editMode ? { outline:'1.5px dashed #cc0000', borderRadius:2, minWidth:20, display:'inline-block' } : {}
- const fs = (half ? 0.82 : 1) * (baseFontSz / 11)
- const hFs = (half ? 0.82 : 1) * (headFontSz / 11)
-  const qFs = 11 * fs
- const qFsSm = Math.max(7, 10 * fs)
- const qFsHead = 12 * fs
- const wrap = { width:'100%', background:'white', color: fontColor, fontFamily: fontFamily || 'Arial, sans-serif', fontSize: `${baseFontSz*fs}px`, direction: isUrdu ? 'rtl' : 'ltr', padding: half ? '3mm 3mm' : '4mm 6mm', boxSizing:'border-box', border: pbStyle, minHeight:half?'':'297mm', ...paperTextFlow({ isUrdu, engLineH, urdLineH, letterSp }) }
  const cell = { border:'1px solid #aaa', padding:`${Math.round(3*fs)}px ${Math.round(7*fs)}px` }
- const cellLbl = { color:'#666', fontSize:`${9*fs}px` }
- const cellVal = { fontWeight:700, fontSize:`${10*fs}px` }
- let qn = 0
- const mcqs = paper['mcq'] || []
+ const cellLbl = { color:'#666', fontSize:`${9*fs}px`, fontFamily: bodyFont }
+ const cellVal = { fontWeight:700, fontSize:`${10*fs}px`, fontFamily: bodyFont }
+ const themeColor = '#1a237e'
 
  return (
- <div {...editablePaperProps(editMode)} style={wrap}>
+ <div {...editablePaperProps(editMode)} style={{ ...wrap, background:'white' }}>
  <div style={{ textAlign:'center', marginBottom:`${4*fs}px` }}>
- <div style={{ fontSize:`${(half?22:28)*hFs}px`, fontWeight:900, color:'#1a237e', letterSpacing:1, textTransform:'uppercase' }}>
- {(settings?.schoolName || 'AL SIDDIQUE SCHOLARS PUBLIC SCHOOL').toUpperCase()}
+ <div style={{ fontSize:`${(half?22:28)*hFs}px`, fontWeight:900, color:themeColor, letterSpacing:1, textTransform:'uppercase', fontFamily: bodyFont }}>
+ <span contentEditable={editMode} suppressContentEditableWarning data-pg-edit="school-name" style={editMode ? editStyle : undefined}>{(settings?.schoolName || 'AL SIDDIQUE SCHOLARS PUBLIC SCHOOL').toUpperCase()}</span>
  </div>
- <div style={{ fontSize:`${11*hFs}px`, color:'#444' }}>
- {settings?.address || 'SHARIF CHOWK, RAYYA KHAS PH: 0300-1291959'}
+ <div style={{ fontSize:`${11*hFs}px`, color:'#444', fontFamily: bodyFont }}>
+ <span contentEditable={editMode} suppressContentEditableWarning data-pg-edit="school-address" style={editMode ? editStyle : undefined}>{settings?.address || 'SHARIF CHOWK, RAYYA KHAS PH: 0300-1291959'}</span>
  </div>
  </div>
- <table style={{ width:'100%', borderCollapse:'collapse', marginBottom:`${5*fs}px` }}>
+ <table style={{ width:'100%', borderCollapse:'collapse', marginBottom:`${5*fs}px`, fontFamily: bodyFont }}>
  <tbody>
  <tr>
- <td rowSpan={2} style={{ ...cell, width: half?44:64, textAlign:'center', verticalAlign:'middle' }}><Logo size={half?38:52} src={settings?.logo} /></td>
+ <td rowSpan={2} style={{ ...cell, width: half?72:96, textAlign:'center', verticalAlign:'middle' }}><Logo size={half?34:46} wide src={settings?.logo} /></td>
  <td style={cell}><div style={cellLbl}>{isUrdu?'طالب علم کا نام':'Student Name'}</div><div style={{ borderBottom:'1px solid #888', minWidth: half?55:80, height:`${14*fs}px` }} /></td>
  <td style={cell}><div style={cellLbl}>{isUrdu?'رول نمبر':'Roll Number'}</div><div style={{ borderBottom:'1px solid #888', minWidth:40, height:`${14*fs}px` }} /></td>
  <td style={{ ...cell, minWidth:60 }}><div style={cellLbl}>{isUrdu?'جماعت':'Class Name'}</div><div style={cellVal}>{cfg.className}</div></td>
@@ -1067,210 +1450,167 @@ function ClassicTemplate({ paper, cfg, printBubble, printAns, half, editMode=fal
  </table>
  <div data-edit-guide style={{ border: editMode ? '2px dashed #cc0000' : 'none', padding:`${7*fs}px ${10*fs}px`, position:'relative' }}>
  <div style={{ position:'relative', zIndex:1 }}>
- {printBubble && mcqs.length>0 && (
- <div style={{ marginBottom:`${8*fs}px` }}>
- <div style={{ display:'grid', gridTemplateColumns:`repeat(${half?4:5},1fr)`, gap:`${3*fs}px ${8*fs}px` }}>
- {mcqs.map((q,i)=>(<div key={q.id} style={{ display:'flex', alignItems:'center', gap:`${3*fs}px`, fontSize:`${10*fs}px`, fontWeight:700 }}><span style={{ minWidth:`${16*fs}px` }}>{i+1}.</span>{['A','B','C','D'].map(lt=>(<span key={lt} style={{ display:'inline-flex', alignItems:'center', justifyContent:'center', width:`${16*fs}px`, height:`${16*fs}px`, borderRadius:'50%', border:'1.5px solid #333', fontSize:`${8*fs}px`, fontWeight:700, color: printAns && q.options?.find(o=>o.key===lt)?.correct ? 'white' : '#333', background: printAns && q.options?.find(o=>o.key===lt)?.correct ? '#c00':'transparent', }}>{lt}</span>))}</div>))}
- </div>
- <div style={{ borderBottom:'1px solid #ccc', marginTop:`${6*fs}px` }} />
- </div>
- )}
- {questionTypes.map((type, idx) => {
- const qs = paper[type.value] || []
- if (qs.length === 0) return null
- qn++
- return (<SectionRenderer key={type.value} type={type} paper={paper} isUrdu={isUrdu} isDual={isDual} editMode={editMode} editStyle={editStyle} fs={fs} qFs={qFs} qFsSm={qFsSm} qFsHead={qFsHead} qBorderStyle={qBorderStyle} urdLineH={urdLineH} engLineH={engLineH} letterSp={letterSp} printAns={printAns} showAnsLines={showAnsLines} qn={qn} half={half} urduHeader={showUrduHeaders ? (type.value==='mcq'?'حصہ معروضی':'حصہ انشائیہ') : ''} />)
- })}
+ {renderPaperSections({ paper, cfg, questionTypes, half, printBubble, printAns, editMode, editStyle, fs, qFs, qFsSm, qFsHead, qBorderStyle, urdLineH, engLineH, letterSp, showAnsLines, showUrduHeaders, showSectionLine, themeColor, bodyFont, urduFont: resolveUrduFont(settings), isUrdu, isDual })}
  </div>
  </div>
  </div>
  )
 }
 
-//  Template 2: Modern Pro 
-function ModernTemplate({ paper, cfg, printBubble, printAns, half, editMode=false, letterSp=0, engLineH=1.5, urdLineH=2.0, showAnsLines=false, fontColor='#1a1a1a', fontFamily='', baseFontSz=11, headFontSz=11, qBorderStyle='none', showUrduHeaders=false, showSectionLine=false, questionTypes=[], settings, pbStyle }) {
- const total = questionTypes.reduce((sum, t) => sum + (paper[t.value]?.length || 0) * (paper[`${t.value}_marks`] || t.marks || 1), 0)
- const isUrdu = cfg.language === 'urdu'
- const isDual = cfg.language === 'dual'
- const editStyle = editMode ? { outline:'1.5px dashed #1565c0', borderRadius:2, minWidth:20, display:'inline-block' } : {}
- const fs = (half ? 0.82 : 1) * (baseFontSz / 11)
- const hFs = (half ? 0.82 : 1) * (headFontSz / 11)
-  const qFs = 11 * fs
- const qFsSm = Math.max(7, 10 * fs)
- const qFsHead = 12 * fs
- let qn = 0
- const mcqs = paper['mcq'] || []
- const themeColor = '#1565c0'
+//  Template 2: Oxford Formal — logo left, navy band, cream surface
+function OxfordTemplate({ paper, cfg, printBubble, printAns, half, editMode=false, letterSp=0, engLineH=1.5, urdLineH=2.0, showAnsLines=false, fontColor='#1a1a1a', fontFamily='', baseFontSz=11, headFontSz=11, qBorderStyle='none', showUrduHeaders=false, showSectionLine=false, questionTypes=[], settings, pbStyle }) {
+ const total = calcPaperTotal(paper, questionTypes)
+ const navy = '#1B2A4A', gold = '#C4A35A', cream = '#FAF8F5'
+ const { isUrdu, isDual, fs, hFs, bodyFont, qFs, qFsSm, qFsHead } = usePaperLayout({ half, baseFontSz, headFontSz, fontFamily, templateDefaultFont: "'Times New Roman', Times, serif", fontColor, cfg, pbStyle, engLineH, urdLineH, letterSp })
+ const editStyle = editMode ? { outline:'1.5px dashed #1B2A4A', borderRadius:2, minWidth:20, display:'inline-block' } : {}
 
  return (
- <div {...editablePaperProps(editMode)} style={{ width:'100%', background:'white', color: fontColor, fontFamily: fontFamily || 'Arial, sans-serif', fontSize:`${baseFontSz*fs}px`, direction:isUrdu?'rtl':'ltr', padding:half?'3mm 3mm':'4mm 6mm', boxSizing:'border-box', border: pbStyle, minHeight:half?'':'297mm', ...paperTextFlow({ isUrdu, engLineH, urdLineH, letterSp }) }}>
- <div style={{ background:'linear-gradient(135deg,#1a237e 0%,#0d47a1 60%,#1565c0 100%)', padding:`${(half?10:14)*fs}px ${(half?12:18)*fs}px`, marginBottom:`${6*fs}px`, borderRadius:`${4*fs}px` }}><div style={{ textAlign:'center', color:'white', fontSize:`${(half?20:26)*hFs}px`, fontWeight:900, letterSpacing:1, marginBottom:`${3*fs}px`, textTransform:'uppercase' }}>{(settings?.schoolName || 'AL SIDDIQUE SCHOLARS PUBLIC SCHOOL').toUpperCase()}</div><div style={{ textAlign:'center', color:'rgba(255,255,255,0.8)', fontSize:`${10*fs}px` }}>{settings?.address || 'SHARIF CHOWK, RAYYA KHAS PH: 0300-1291959'}</div></div>
- <table style={{ width:'100%', borderCollapse:'collapse', marginBottom:`${8*fs}px`, border:'1px solid #e0e0e0', fontSize:`${10*fs}px` }}>
- <tbody>
- <tr style={{ background:'#e8eaf6' }}>
- <td rowSpan={2} style={{ border:'1px solid #c5cae9', padding:`${4*fs}px`, textAlign:'center', verticalAlign:'middle' }}><Logo size={half?36:50} src={settings?.logo} /></td>
- {[ ['Student Name', null], ['Roll Number', null], ['Class', cfg.className], ['Paper Code', cfg.paperCode] ].map(([lbl,val])=>(<td key={lbl} style={{ border:'1px solid #c5cae9', padding:`${3*fs}px ${6*fs}px` }}><div style={{ color:'#5c6bc0', fontWeight:700, fontSize:`${9*fs}px` }}>{lbl}</div>{val ? <div style={{ fontWeight:700, fontSize:`${11*fs}px`, color:'#1a237e' }}>{val}</div> : <div style={{ borderBottom:'2px solid #1a237e', height:`${14*fs}px`, marginTop:`${2*fs}px` }} />}</td>))}
- </tr>
- <tr>{[ ['Subject', cfg.subjectName], ['Time', cfg.timeAllowed], ['Total Marks', String(total)], ['Exam Date', cfg.examDate] ].map(([lbl,val])=>(<td key={lbl} style={{ border:'1px solid #c5cae9', padding:`${3*fs}px ${6*fs}px` }}><div style={{ color:'#5c6bc0', fontWeight:700, fontSize:`${9*fs}px` }}>{lbl}</div><div style={{ fontWeight:700, fontSize:`${11*fs}px`, color:'#1a237e' }}>{val}</div></td>))}</tr>
- </tbody>
- </table>
- <div style={{ position:'relative' }}><div style={{ position:'absolute', inset:0, display:'flex', alignItems:'center', justifyContent:'center', pointerEvents:'none', zIndex:0, overflow:'hidden' }}><div style={{ transform:'rotate(-30deg)', opacity:0.04, textAlign:'center' }}><div style={{ fontSize:half?80:120, fontWeight:900, color:'#1a237e', lineHeight:1 }}></div></div></div>
- <div style={{ position:'relative', zIndex:1 }}>
- {printBubble && mcqs.length>0 && (
- <div style={{ background:'#f5f5f5', border:'1px solid #e0e0e0', borderRadius:`${4*fs}px`, padding:`${6*fs}px`, marginBottom:`${8*fs}px` }}>
- <div style={{ display:'grid', gridTemplateColumns:`repeat(${half?4:5},1fr)`, gap:`${4*fs}px ${10*fs}px` }}>
- {mcqs.map((q,i)=>(<div key={q.id} style={{ display:'flex', alignItems:'center', gap:`${4*fs}px`, fontSize:`${10*fs}px`, fontWeight:700 }}><span style={{ color:'#1565c0', minWidth:`${18*fs}px` }}>{i+1}.</span>{['A','B','C','D'].map(lt=>(<span key={lt} style={{ display:'inline-flex', alignItems:'center', justifyContent:'center', width:`${16*fs}px`, height:`${16*fs}px`, borderRadius:'50%', border:'1.5px solid #1565c0', fontSize:`${8*fs}px`, fontWeight:700, color: printAns&&q.options?.find(o=>o.key===lt)?.correct?'white':'#1565c0', background:printAns&&q.options?.find(o=>o.key===lt)?.correct?'#1565c0':'transparent' }}>{lt}</span>))}</div>))}
+ <div {...editablePaperProps(editMode)} style={{ width:'100%', background:cream, color:fontColor, fontFamily:bodyFont, fontSize:`${baseFontSz*fs}px`, direction:isUrdu?'rtl':'ltr', padding:half?'3mm':'4mm 5mm', boxSizing:'border-box', border:pbStyle, minHeight:half?'':'297mm', ...paperTextFlow({ isUrdu, engLineH, urdLineH, letterSp }) }}>
+ <div style={{ background:navy, padding:`${(half?10:14)*fs}px`, marginBottom:`${6*fs}px`, display:'flex', alignItems:'center', gap:`${12*fs}px` }}>
+ <Logo size={half?40:54} wide src={settings?.logo} />
+ <div style={{ flex:1, textAlign:'center' }}>
+ <div style={{ color:'#F5F0E6', fontSize:`${(half?18:24)*hFs}px`, fontWeight:800, letterSpacing:'0.06em', textTransform:'uppercase' }}>{(settings?.schoolName || 'AL SIDDIQUE SCHOLARS PUBLIC SCHOOL').toUpperCase()}</div>
+ <div style={{ color:'#B8C4D4', fontSize:`${9*hFs}px`, marginTop:`${3*fs}px`, letterSpacing:'0.12em' }}>{settings?.address || 'SHARIF CHOWK, RAYYA KHAS'}</div>
  </div>
  </div>
- )}
- {questionTypes.map((type, idx) => {
- const qs = paper[type.value] || []
- if (qs.length === 0) return null
- qn++
- return (<SectionRenderer key={type.value} type={type} paper={paper} isUrdu={isUrdu} isDual={isDual} editMode={editMode} editStyle={editStyle} fs={fs} qFs={qFs} qFsSm={qFsSm} qFsHead={qFsHead} qBorderStyle={qBorderStyle} urdLineH={urdLineH} engLineH={engLineH} letterSp={letterSp} printAns={printAns} showAnsLines={showAnsLines} qn={qn} half={half} themeColor={themeColor} urduHeader={showUrduHeaders ? (type.value==='mcq'?'حصہ معروضی':'حصہ انشائیہ') : ''} />)
- })}
- </div>
- </div>
- </div>
- )
-}
-
-//  Template 3: Elite Premium 
-function EliteTemplate({ paper, cfg, printBubble, printAns, half, editMode=false, letterSp=0, engLineH=1.5, urdLineH=2.0, showAnsLines=false, fontColor='#1a1a1a', fontFamily='', baseFontSz=11, headFontSz=11, qBorderStyle='none', showUrduHeaders=false, showSectionLine=false, questionTypes=[], settings, pbStyle }) {
- const total = questionTypes.reduce((sum, t) => sum + (paper[t.value]?.length || 0) * (paper[`${t.value}_marks`] || t.marks || 1), 0)
- const isUrdu = cfg.language === 'urdu'
- const isDual = cfg.language === 'dual'
- const editStyle = editMode ? { outline:'1.5px dashed #B8860B', borderRadius:2, minWidth:20, display:'inline-block' } : {}
- const fs = (half ? 0.82 : 1) * (baseFontSz / 11)
- const hFs = (half ? 0.82 : 1) * (headFontSz / 11)
-  const qFs = 11 * fs
- const qFsSm = Math.max(7, 10 * fs)
- const qFsHead = 12 * fs
- const gold = '#B8860B', goldL = '#DAA520'
- let qn = 0
- const mcqs = paper['mcq'] || []
-
- return (
- <div {...editablePaperProps(editMode)} style={{ width:'100%', background:'#fffef8', color: fontColor, fontFamily: fontFamily || "'Georgia', Times, serif", fontSize:`${baseFontSz*fs}px`, direction:isUrdu?'rtl':'ltr', padding:half?'3mm 3mm':'4mm 6mm', boxSizing:'border-box', border: pbStyle, minHeight:half?'':'297mm', ...paperTextFlow({ isUrdu, engLineH, urdLineH, letterSp }) }}>
- <div style={{ background:'#0a0a14', padding:`${(half?12:16)*fs}px ${(half?14:20)*fs}px`, marginBottom:`${8*fs}px` }}><div style={{ textAlign:'center', color:goldL, fontSize:`${(half?20:26)*hFs}px`, fontWeight:700, letterSpacing:2, marginBottom:`${4*fs}px`, fontFamily:"Georgia, serif", textTransform:'uppercase' }}>{(settings?.schoolName || 'AL SIDDIQUE SCHOLARS PUBLIC SCHOOL').toUpperCase()}</div><div style={{ textAlign:'center', display:'flex', alignItems:'center', justifyContent:'center', gap:8 }}><div style={{ flex:1, height:1, background:`linear-gradient(to right, transparent, ${gold})` }} /><div style={{ color:'#aaa', fontSize:`${9*hFs}px`, letterSpacing:1 }}>{settings?.address || 'SHARIF CHOWK, RAYYA KHAS PH: 0300-1291959'}</div><div style={{ flex:1, height:1, background:`linear-gradient(to left, transparent, ${gold})` }} /></div></div>
- <table style={{ width:'100%', borderCollapse:'collapse', marginBottom:`${8*fs}px`, fontSize:`${10*fs}px` }}>
+ <div style={{ height:2, background:gold, marginBottom:`${8*fs}px` }} />
+ <table style={{ width:'100%', borderCollapse:'collapse', marginBottom:`${8*fs}px`, fontSize:`${10*fs}px`, fontFamily:bodyFont }}>
  <tbody>
  <tr>
- <td rowSpan={2} style={{ border:`1px solid ${gold}`, padding:`${5*fs}px`, textAlign:'center', verticalAlign:'middle', background:'#fffef8' }}><Logo size={half?36:50} src={settings?.logo} /></td>
- {[ ['Student Name', null], ['Roll Number', null], ['Class', cfg.className], ['Paper Code', cfg.paperCode] ].map(([lbl,val])=>(<td key={lbl} style={{ border:`1px solid ${gold}`, padding:`${3*fs}px ${7*fs}px` }}><div style={{ color:gold, fontWeight:700, fontSize:`${8*fs}px`, letterSpacing:'0.06em', textTransform:'uppercase' }}>{lbl}</div>{val ? <div style={{ fontWeight:700, fontSize:`${11*fs}px` }}>{val}</div> : <div style={{ borderBottom:`1.5px solid ${gold}`, height:`${14*fs}px`, marginTop:`${2*fs}px` }} />}</td>))}
+ {[['Student Name', null], ['Roll No.', null], ['Class', cfg.className], ['Paper Code', cfg.paperCode]].map(([lbl, val]) => (
+ <td key={lbl} style={{ border:`1px solid ${navy}33`, padding:`${4*fs}px ${6*fs}px`, background:'#fff' }}>
+ <div style={{ color:navy, fontSize:`${8*fs}px`, fontWeight:700, letterSpacing:'0.08em', textTransform:'uppercase' }}>{lbl}</div>
+ {val ? <div style={{ fontWeight:700, color:'#111' }}>{val}</div> : <div style={{ borderBottom:`1px solid ${navy}55`, height:`${14*fs}px`, marginTop:2 }} />}
+ </td>
+ ))}
  </tr>
- <tr>{[ ['Subject', cfg.subjectName], ['Time', cfg.timeAllowed], ['Total Marks', String(total)], ['Date', cfg.examDate] ].map(([lbl,val])=>(<td key={lbl} style={{ border:`1px solid ${gold}`, padding:`${3*fs}px ${7*fs}px` }}><div style={{ color:gold, fontWeight:700, fontSize:`${8*fs}px`, letterSpacing:'0.06em', textTransform:'uppercase' }}>{lbl}</div><div style={{ fontWeight:700, fontSize:`${11*fs}px` }}>{val}</div></td>))}</tr>
+ <tr>
+ {[['Subject', cfg.subjectName], ['Time', cfg.timeAllowed], ['Total Marks', String(total)], ['Date', cfg.examDate]].map(([lbl, val]) => (
+ <td key={lbl} style={{ border:`1px solid ${navy}33`, padding:`${4*fs}px ${6*fs}px`, background:'#fff' }}>
+ <div style={{ color:navy, fontSize:`${8*fs}px`, fontWeight:700, letterSpacing:'0.08em', textTransform:'uppercase' }}>{lbl}</div>
+ <div style={{ fontWeight:700, color:'#111' }}>{val}</div>
+ </td>
+ ))}
+ </tr>
  </tbody>
  </table>
- <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:`${8*fs}px` }}><div style={{ flex:1, height:1, background:gold }} /><div style={{ color:gold, fontSize:`${10*fs}px` }}></div><div style={{ flex:1, height:1, background:gold }} /></div>
- <div style={{ position:'relative' }}><div style={{ position:'absolute', inset:0, display:'flex', alignItems:'center', justifyContent:'center', pointerEvents:'none', zIndex:0, overflow:'hidden' }}><div style={{ transform:'rotate(-20deg)', opacity:0.04 }}><Logo size={half?160:240} src={settings?.logo} /></div></div>
- <div style={{ position:'relative', zIndex:1 }}>
- {printBubble && mcqs.length>0 && (
- <div style={{ border:`1px solid ${gold}`, borderRadius:`${4*fs}px`, padding:`${6*fs}px`, marginBottom:`${8*fs}px`, background:'#fffdf0' }}>
- <div style={{ display:'grid', gridTemplateColumns:`repeat(${half?4:5},1fr)`, gap:`${4*fs}px ${10*fs}px` }}>
- {mcqs.map((q,i)=>(<div key={q.id} style={{ display:'flex', alignItems:'center', gap:`${4*fs}px`, fontSize:`${10*fs}px`, fontWeight:700 }}><span style={{ color:gold, minWidth:`${18*fs}px`, fontFamily:'Georgia,serif' }}>{i+1}.</span>{['A','B','C','D'].map(lt=>(<span key={lt} style={{ display:'inline-flex', alignItems:'center', justifyContent:'center', width:`${16*fs}px`, height:`${16*fs}px`, borderRadius:'50%', border:`1.5px solid ${gold}`, fontSize:`${8*fs}px`, fontWeight:700, color:printAns&&q.options?.find(o=>o.key===lt)?.correct?'white':gold, background:printAns&&q.options?.find(o=>o.key===lt)?.correct?gold:'transparent' }}>{lt}</span>))}</div>))}
- </div>
- </div>
- )}
- {questionTypes.map((type, idx) => {
- const qs = paper[type.value] || []
- if (qs.length === 0) return null
- qn++
- return (<SectionRenderer key={type.value} type={type} paper={paper} isUrdu={isUrdu} isDual={isDual} editMode={editMode} editStyle={editStyle} fs={fs} qFs={qFs} qFsSm={qFsSm} qFsHead={qFsHead} qBorderStyle={qBorderStyle} urdLineH={urdLineH} engLineH={engLineH} letterSp={letterSp} printAns={printAns} showAnsLines={showAnsLines} qn={qn} half={half} themeColor={gold} urduHeader={showUrduHeaders ? (type.value==='mcq'?'حصہ معروضی':'حصہ انشائیہ') : ''} />)
- })}
- </div>
- </div>
+ {renderPaperSections({ paper, cfg, questionTypes, half, printBubble, printAns, editMode, editStyle, fs, qFs, qFsSm, qFsHead, qBorderStyle, urdLineH, engLineH, letterSp, showAnsLines, showUrduHeaders, showSectionLine, themeColor:navy, bodyFont, urduFont: resolveUrduFont(settings), isUrdu, isDual })}
  </div>
  )
 }
 
-//  Template 4: Emerald Green 
-function EmeraldTemplate({ paper, cfg, printBubble, printAns, half, editMode=false, letterSp=0, engLineH=1.5, urdLineH=2.0, showAnsLines=false, fontColor='#1a1a1a', fontFamily='', baseFontSz=11, headFontSz=11, qBorderStyle='none', showUrduHeaders=false, showSectionLine=false, questionTypes=[], settings, pbStyle }) {
- const total = questionTypes.reduce((sum, t) => sum + (paper[t.value]?.length || 0) * (paper[`${t.value}_marks`] || t.marks || 1), 0)
- const isUrdu = cfg.language === 'urdu'
- const isDual = cfg.language === 'dual'
- const fs = (half ? 0.82 : 1) * (baseFontSz / 11)
- const hFs = (half ? 0.82 : 1) * (headFontSz / 11)
-  const qFs = 11 * fs
- const qFsSm = Math.max(7, 10 * fs)
- const qFsHead = 12 * fs
- const teal = '#00695c', tealL = '#00897b', mint = '#e0f2f1'
- const editStyle = editMode ? { outline:'1.5px dashed #00897b', borderRadius:2, minWidth:20, display:'inline-block' } : {}
- let qn = 0
- const mcqs = paper['mcq'] || []
+//  Template 3: Cambridge Slate — logo centered, charcoal + copper accents
+function CambridgeTemplate({ paper, cfg, printBubble, printAns, half, editMode=false, letterSp=0, engLineH=1.5, urdLineH=2.0, showAnsLines=false, fontColor='#1a1a1a', fontFamily='', baseFontSz=11, headFontSz=11, qBorderStyle='none', showUrduHeaders=false, showSectionLine=false, questionTypes=[], settings, pbStyle }) {
+ const total = calcPaperTotal(paper, questionTypes)
+ const charcoal = '#2D3142', copper = '#B87E5B', paperBg = '#FDFCFB'
+ const { isUrdu, isDual, fs, hFs, bodyFont, qFs, qFsSm, qFsHead } = usePaperLayout({ half, baseFontSz, headFontSz, fontFamily, templateDefaultFont: "'Georgia', 'Times New Roman', serif", fontColor, cfg, pbStyle, engLineH, urdLineH, letterSp })
+ const editStyle = editMode ? { outline:'1.5px dashed #B87E5B', borderRadius:2, minWidth:20, display:'inline-block' } : {}
 
  return (
- <div {...editablePaperProps(editMode)} style={{ width:'100%', background:'#f9fffe', color: fontColor, fontFamily: fontFamily || 'Arial, sans-serif', fontSize:`${baseFontSz*fs}px`, direction:isUrdu?'rtl':'ltr', padding:half?'3mm 3mm':'4mm 6mm', boxSizing:'border-box', border: pbStyle, minHeight:half?'':'297mm', ...paperTextFlow({ isUrdu, engLineH, urdLineH, letterSp }) }}>
- <div style={{ background:`linear-gradient(90deg,${teal} 0%,${tealL} 50%,#26a69a 100%)`, borderRadius:`${4*fs}px`, overflow:'hidden', marginBottom:`${7*fs}px` }}><div style={{ padding:`${(half?10:14)*fs}px ${(half?12:18)*fs}px`, display:'flex', alignItems:'center', gap:`${10*fs}px` }}><Logo size={half?36:50} src={settings?.logo} /><div style={{ flex:1, textAlign:'center' }}><div style={{ color:'white', fontSize:`${(half?20:26)*hFs}px`, fontWeight:900, letterSpacing:1, textTransform:'uppercase' }}>{(settings?.schoolName || 'AL SIDDIQUE SCHOLARS PUBLIC SCHOOL').toUpperCase()}</div><div style={{ color:'rgba(255,255,255,0.8)', fontSize:`${10*fs}px`, marginTop:2 }}>{settings?.address || 'SHARIF CHOWK, RAYYA KHAS PH: 0300-1291959'}</div></div></div></div>
- <div style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:`${4*fs}px`, marginBottom:`${8*fs}px` }}>{[ ['Student Name', null], ['Subject', cfg.subjectName], ['Class', cfg.className], ['Date', cfg.examDate], ['Roll Number', null], ['Time', cfg.timeAllowed], ['Total Marks', String(total)], ['Paper Code', cfg.paperCode] ].map(([lbl,val])=>(<div key={lbl} style={{ background:mint, borderRadius:`${3*fs}px`, border:`1px solid ${tealL}44`, padding:`${3*fs}px ${6*fs}px` }}><div style={{ color:teal, fontWeight:700, fontSize:`${8*fs}px`, textTransform:'uppercase', letterSpacing:'0.05em' }}>{lbl}</div>{val ? <div style={{ fontWeight:700, fontSize:`${10*fs}px`, color:'#004d40' }}>{val}</div> : <div style={{ borderBottom:`1.5px solid ${teal}`, height:`${12*fs}px`, marginTop:`${2*fs}px` }} />}</div>))}</div>
- <div style={{ border:`2px solid ${teal}`, borderRadius:`${6*fs}px`, padding:`${8*fs}px`, position:'relative', overflow:'hidden' }}><div style={{ position:'absolute', inset:0, display:'flex', alignItems:'center', justifyContent:'center', pointerEvents:'none', overflow:'hidden' }}><div style={{ transform:'rotate(-30deg)', opacity:0.04, fontSize:half?70:110, fontWeight:900, color:teal, lineHeight:1, textAlign:'center' }}></div></div>
- <div style={{ position:'relative' }}>
- {printBubble && mcqs.length>0 && (
- <div style={{ background:mint, border:`1px solid ${tealL}44`, borderRadius:`${4*fs}px`, padding:`${5*fs}px`, marginBottom:`${8*fs}px` }}>
- <div style={{ display:'grid', gridTemplateColumns:`repeat(${half?4:5},1fr)`, gap:`${3*fs}px ${8*fs}px` }}>
- {mcqs.map((q,i)=>(<div key={q.id} style={{ display:'flex', alignItems:'center', gap:`${3*fs}px`, fontSize:`${10*fs}px`, fontWeight:700 }}><span style={{ color:teal, minWidth:`${16*fs}px` }}>{i+1}.</span>{['A','B','C','D'].map(lt=>(<span key={lt} style={{ display:'inline-flex', alignItems:'center', justifyContent:'center', width:`${16*fs}px`, height:`${16*fs}px`, borderRadius:`${3*fs}px`, border:`1.5px solid ${teal}`, fontSize:`${8*fs}px`, fontWeight:700, color: printAns&&q.options?.find(o=>o.key===lt)?.correct?'white':teal, background: printAns&&q.options?.find(o=>o.key===lt)?.correct?teal:'transparent' }}>{lt}</span>))}</div>))}
+ <div {...editablePaperProps(editMode)} style={{ width:'100%', background:paperBg, color:fontColor, fontFamily:bodyFont, fontSize:`${baseFontSz*fs}px`, direction:isUrdu?'rtl':'ltr', padding:half?'4mm 3mm':'6mm 8mm', boxSizing:'border-box', border:pbStyle, minHeight:half?'':'297mm', ...paperTextFlow({ isUrdu, engLineH, urdLineH, letterSp }) }}>
+ <div style={{ textAlign:'center', marginBottom:`${10*fs}px` }}>
+ <Logo size={half?48:64} wide src={settings?.logo} />
+ <div style={{ fontSize:`${(half?20:26)*hFs}px`, fontWeight:700, color:charcoal, letterSpacing:'0.04em', marginTop:`${6*fs}px`, textTransform:'uppercase' }}>{(settings?.schoolName || 'AL SIDDIQUE SCHOLARS PUBLIC SCHOOL').toUpperCase()}</div>
+ <div style={{ fontSize:`${10*hFs}px`, color:'#6B7280', marginTop:`${4*fs}px` }}>{settings?.address || 'SHARIF CHOWK, RAYYA KHAS PH: 0300-1291959'}</div>
+ <div style={{ display:'flex', alignItems:'center', gap:8, marginTop:`${8*fs}px` }}><div style={{ flex:1, height:1, background:copper }} /><div style={{ width:6, height:6, borderRadius:'50%', background:copper }} /><div style={{ flex:1, height:1, background:copper }} /></div>
  </div>
+ <div style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:`${6*fs}px`, marginBottom:`${12*fs}px`, fontSize:`${10*fs}px` }}>
+ {[['Student Name', null], ['Roll Number', null], ['Class', cfg.className], ['Paper Code', cfg.paperCode], ['Subject', cfg.subjectName], ['Time Allowed', cfg.timeAllowed], ['Total Marks', String(total)], ['Exam Date', cfg.examDate]].map(([lbl, val]) => (
+ <div key={lbl} style={{ borderBottom:`2px solid ${charcoal}18`, paddingBottom:`${4*fs}px` }}>
+ <div style={{ color:copper, fontSize:`${8*fs}px`, fontWeight:700, letterSpacing:'0.1em', textTransform:'uppercase' }}>{lbl}</div>
+ {val ? <div style={{ fontWeight:700, color:charcoal, marginTop:2 }}>{val}</div> : <div style={{ borderBottom:`1px solid ${charcoal}44`, height:`${14*fs}px`, marginTop:4 }} />}
  </div>
- )}
- {questionTypes.map((type, idx) => {
- const qs = paper[type.value] || []
- if (qs.length === 0) return null
- qn++
- return (<SectionRenderer key={type.value} type={type} paper={paper} isUrdu={isUrdu} isDual={isDual} editMode={editMode} editStyle={editStyle} fs={fs} qFs={qFs} qFsSm={qFsSm} qFsHead={qFsHead} qBorderStyle={qBorderStyle} urdLineH={urdLineH} engLineH={engLineH} letterSp={letterSp} printAns={printAns} showAnsLines={showAnsLines} qn={qn} half={half} themeColor={teal} urduHeader={showUrduHeaders ? (type.value==='mcq'?'حصہ معروضی':'حصہ انشائیہ') : ''} />)
- })}
+ ))}
  </div>
+ {renderPaperSections({ paper, cfg, questionTypes, half, printBubble, printAns, editMode, editStyle, fs, qFs, qFsSm, qFsHead, qBorderStyle, urdLineH, engLineH, letterSp, showAnsLines, showUrduHeaders, showSectionLine, themeColor:charcoal, bodyFont, urduFont: resolveUrduFont(settings), isUrdu, isDual })}
+ </div>
+ )
+}
+
+//  Template 4: Institutional Pro — logo right, teal accent bar
+function InstitutionalTemplate({ paper, cfg, printBubble, printAns, half, editMode=false, letterSp=0, engLineH=1.5, urdLineH=2.0, showAnsLines=false, fontColor='#1a1a1a', fontFamily='', baseFontSz=11, headFontSz=11, qBorderStyle='none', showUrduHeaders=false, showSectionLine=false, questionTypes=[], settings, pbStyle }) {
+ const total = calcPaperTotal(paper, questionTypes)
+ const teal = '#0E5C75', slate = '#1F2937', mist = '#F4F7F8'
+ const { isUrdu, isDual, fs, hFs, bodyFont, qFs, qFsSm, qFsHead } = usePaperLayout({ half, baseFontSz, headFontSz, fontFamily, templateDefaultFont: "'Calibri', 'Segoe UI', sans-serif", fontColor, cfg, pbStyle, engLineH, urdLineH, letterSp })
+ const editStyle = editMode ? { outline:'1.5px dashed #0E5C75', borderRadius:2, minWidth:20, display:'inline-block' } : {}
+
+ return (
+ <div {...editablePaperProps(editMode)} style={{ width:'100%', background:'#fff', color:fontColor, fontFamily:bodyFont, fontSize:`${baseFontSz*fs}px`, direction:isUrdu?'rtl':'ltr', padding:0, boxSizing:'border-box', border:pbStyle, minHeight:half?'':'297mm', borderLeft:`4px solid ${teal}`, ...paperTextFlow({ isUrdu, engLineH, urdLineH, letterSp }) }}>
+ <div style={{ background:mist, padding:`${(half?10:14)*fs}px ${(half?12:16)*fs}px`, display:'flex', alignItems:'center', justifyContent:'space-between', gap:`${12*fs}px` }}>
+ <div>
+ <div style={{ fontSize:`${(half?18:24)*hFs}px`, fontWeight:800, color:slate, letterSpacing:'0.03em', textTransform:'uppercase' }}>{(settings?.schoolName || 'AL SIDDIQUE SCHOLARS PUBLIC SCHOOL').toUpperCase()}</div>
+ <div style={{ fontSize:`${10*hFs}px`, color:'#64748B', marginTop:`${3*fs}px` }}>{settings?.address || 'SHARIF CHOWK, RAYYA KHAS'}</div>
+ </div>
+ <Logo size={half?42:56} wide src={settings?.logo} />
+ </div>
+ <div style={{ padding:`${(half?8:12)*fs}px ${(half?10:14)*fs}px` }}>
+ <div style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:`${4*fs}px`, marginBottom:`${10*fs}px`, background:mist, padding:`${6*fs}px`, borderRadius:4, fontSize:`${10*fs}px` }}>
+ {[['Student', null], ['Roll No.', null], ['Class', cfg.className], ['Code', cfg.paperCode], ['Subject', cfg.subjectName], ['Time', cfg.timeAllowed], ['Marks', String(total)], ['Date', cfg.examDate]].map(([lbl, val]) => (
+ <div key={lbl}>
+ <div style={{ color:teal, fontSize:`${8*fs}px`, fontWeight:700, textTransform:'uppercase' }}>{lbl}</div>
+ {val ? <div style={{ fontWeight:700 }}>{val}</div> : <div style={{ borderBottom:`1px solid ${teal}55`, height:12, marginTop:2 }} />}
+ </div>
+ ))}
+ </div>
+ {renderPaperSections({ paper, cfg, questionTypes, half, printBubble, printAns, editMode, editStyle, fs, qFs, qFsSm, qFsHead, qBorderStyle, urdLineH, engLineH, letterSp, showAnsLines, showUrduHeaders, showSectionLine, themeColor:teal, bodyFont, urduFont: resolveUrduFont(settings), isUrdu, isDual })}
  </div>
  </div>
  )
 }
 
-function AcademicClassicTemplate(props) {
- return <ClassicTemplate {...props} qBorderStyle={props.qBorderStyle === 'none' ? 'table' : props.qBorderStyle} fontFamily={props.fontFamily || "'Times New Roman', serif"} fontColor={props.fontColor || '#111827'} />
+//  Template 5: Board Standard — maroon formal, logo in meta table
+function BoardStandardTemplate({ paper, cfg, printBubble, printAns, half, editMode=false, letterSp=0, engLineH=1.5, urdLineH=2.0, showAnsLines=false, fontColor='#1a1a1a', fontFamily='', baseFontSz=11, headFontSz=11, qBorderStyle='none', showUrduHeaders=false, showSectionLine=false, questionTypes=[], settings, pbStyle }) {
+ const total = calcPaperTotal(paper, questionTypes)
+ const maroon = '#7A2038', ink = '#1C1917'
+ const { isUrdu, isDual, fs, hFs, bodyFont, qFs, qFsSm, qFsHead } = usePaperLayout({ half, baseFontSz, headFontSz, fontFamily, templateDefaultFont: "'Times New Roman', Times, serif", fontColor, cfg, pbStyle, engLineH, urdLineH, letterSp })
+ const editStyle = editMode ? { outline:'1.5px dashed #7A2038', borderRadius:2, minWidth:20, display:'inline-block' } : {}
+ const cell = { border:`1px solid ${maroon}44`, padding:`${4*fs}px ${6*fs}px` }
+
+ return (
+ <div {...editablePaperProps(editMode)} style={{ width:'100%', background:'#fff', color:fontColor, fontFamily:bodyFont, fontSize:`${baseFontSz*fs}px`, direction:isUrdu?'rtl':'ltr', padding:half?'3mm':'4mm 6mm', boxSizing:'border-box', border:pbStyle, minHeight:half?'':'297mm', ...paperTextFlow({ isUrdu, engLineH, urdLineH, letterSp }) }}>
+ <div style={{ textAlign:'center', borderBottom:`3px double ${maroon}`, paddingBottom:`${8*fs}px`, marginBottom:`${8*fs}px` }}>
+ <div style={{ fontSize:`${(half?20:26)*hFs}px`, fontWeight:800, color:maroon, letterSpacing:'0.05em', textTransform:'uppercase' }}>{(settings?.schoolName || 'AL SIDDIQUE SCHOLARS PUBLIC SCHOOL').toUpperCase()}</div>
+ <div style={{ fontSize:`${10*hFs}px`, color:'#57534E', marginTop:4 }}>{settings?.address || 'SHARIF CHOWK, RAYYA KHAS PH: 0300-1291959'}</div>
+ </div>
+ <table style={{ width:'100%', borderCollapse:'collapse', marginBottom:`${8*fs}px`, fontFamily:bodyFont }}>
+ <tbody>
+ <tr>
+ <td rowSpan={2} style={{ ...cell, width:half?80:100, textAlign:'center', verticalAlign:'middle' }}><Logo size={half?36:48} wide src={settings?.logo} /></td>
+ {[['Student Name', null], ['Roll Number', null], ['Class', cfg.className], ['Paper Code', cfg.paperCode]].map(([lbl, val]) => (
+ <td key={lbl} style={cell}><div style={{ color:maroon, fontSize:`${8*fs}px`, fontWeight:700, textTransform:'uppercase' }}>{lbl}</div>{val ? <div style={{ fontWeight:700, color:ink }}>{val}</div> : <div style={{ borderBottom:`1px solid ${maroon}66`, height:14, marginTop:2 }} />}</td>
+ ))}
+ </tr>
+ <tr>
+ {[['Subject', cfg.subjectName], ['Time Allowed', cfg.timeAllowed], ['Total Marks', String(total)], ['Exam Date', cfg.examDate]].map(([lbl, val]) => (
+ <td key={lbl} style={cell}><div style={{ color:maroon, fontSize:`${8*fs}px`, fontWeight:700, textTransform:'uppercase' }}>{lbl}</div><div style={{ fontWeight:700, color:ink }}>{val}</div></td>
+ ))}
+ </tr>
+ </tbody>
+ </table>
+ {renderPaperSections({ paper, cfg, questionTypes, half, printBubble, printAns, editMode, editStyle, fs, qFs, qFsSm, qFsHead, qBorderStyle: qBorderStyle === 'none' ? 'table' : qBorderStyle, urdLineH, engLineH, letterSp, showAnsLines, showUrduHeaders, showSectionLine, themeColor:maroon, bodyFont, urduFont: resolveUrduFont(settings), isUrdu, isDual })}
+ </div>
+ )
 }
 
-//  Template 5: Docx Assessment 
-function DocxAssessmentTemplate({ paper, cfg, printBubble, printAns, half, editMode=false, letterSp=0, engLineH=1.5, urdLineH=2.0, showAnsLines=false, fontColor='#1a1a1a', fontFamily='', baseFontSz=11, headFontSz=11, qBorderStyle='none', showUrduHeaders=false, showSectionLine=false, questionTypes=[] , pbStyle }) {
- const total = questionTypes.reduce((sum, t) => sum + (paper[t.value]?.length || 0) * (paper[`${t.value}_marks`] || t.marks || 1), 0)
- const isUrdu = cfg.language === 'urdu'
- const isDual = cfg.language === 'dual'
- const fs = (half ? 0.82 : 1) * (baseFontSz / 11)
- const hFs = (half ? 0.82 : 1) * (headFontSz / 11)
-  const qFs = 11 * fs
- const qFsSm = Math.max(7, 10 * fs)
- const qFsHead = 12 * fs
+//  Template 6: Docx Assessment
+function DocxAssessmentTemplate({ paper, cfg, printBubble, printAns, half, editMode=false, letterSp=0, engLineH=1.5, urdLineH=2.0, showAnsLines=false, fontColor='#1a1a1a', fontFamily='', baseFontSz=11, headFontSz=11, qBorderStyle='none', showUrduHeaders=false, showSectionLine=false, questionTypes=[], settings, pbStyle }) {
+ const total = calcPaperTotal(paper, questionTypes)
+ const { isUrdu, isDual, fs, bodyFont, qFs, qFsSm, qFsHead } = usePaperLayout({ half, baseFontSz, headFontSz, fontFamily, templateDefaultFont: "'Times New Roman', Times, serif", fontColor, cfg, pbStyle, engLineH, urdLineH, letterSp })
  const editStyle = editMode ? { outline:'1px dashed #444', minWidth:20, display:'inline-block' } : {}
- let qn = 0
- const mcqs = paper['mcq'] || []
 
  return (
- <div {...editablePaperProps(editMode)} style={{ width:'100%', background:'white', color: fontColor, fontFamily: fontFamily || "'Times New Roman', Times, serif", fontSize:`${baseFontSz*fs}px`, direction:isUrdu?'rtl':'ltr', padding:half?'8mm 6mm':'12mm 15mm', boxSizing:'border-box', border: pbStyle, minHeight:half?'':'297mm', ...paperTextFlow({ isUrdu, engLineH, urdLineH, letterSp }) }}>
- <div style={{ borderBottom:'2px solid #000', paddingBottom:5, marginBottom:15 }}><div style={{ fontSize:`${(half?18:24)*fs}px`, fontWeight:700, textAlign:'center' }}>ASSESSMENT PAPER</div><div style={{ display:'flex', justifyContent:'space-between', marginTop:10, fontWeight:700, fontSize:`${11*fs}px` }}><span>Subject: {cfg.subjectName}</span><span>Class: {cfg.className}</span><span>Marks: {total}</span></div></div>
- <div style={{ marginBottom:15, display:'flex', justifyContent:'space-between', fontSize:`${10*fs}px` }}><span>Student Name: __________________________</span><span>Date: {cfg.examDate}</span></div>
- {questionTypes.map((type, idx) => {
- const qs = paper[type.value] || []
- if (qs.length === 0) return null
- qn++
- return (<SectionRenderer key={type.value} type={type} paper={paper} isUrdu={isUrdu} isDual={isDual} editMode={editMode} editStyle={editStyle} fs={fs} qFs={qFs} qFsSm={qFsSm} qFsHead={qFsHead} qBorderStyle={qBorderStyle} urdLineH={urdLineH} engLineH={engLineH} letterSp={letterSp} printAns={printAns} showAnsLines={showAnsLines} qn={qn} half={half} themeColor="#000" urduHeader={showUrduHeaders ? (type.value==='mcq'?'حصہ معروضی':'حصہ انشائیہ') : ''} />)
- })}
+ <div {...editablePaperProps(editMode)} style={{ width:'100%', background:'white', color: fontColor, fontFamily: bodyFont, fontSize:`${baseFontSz*fs}px`, direction:isUrdu?'rtl':'ltr', padding:half?'8mm 6mm':'12mm 15mm', boxSizing:'border-box', border: pbStyle, minHeight:half?'':'297mm', ...paperTextFlow({ isUrdu, engLineH, urdLineH, letterSp }) }}>
+ <div style={{ borderBottom:'2px solid #000', paddingBottom:5, marginBottom:15 }}>
+ <div style={{ fontSize:`${(half?18:24)*fs}px`, fontWeight:700, textAlign:'center', fontFamily:bodyFont }}>ASSESSMENT PAPER</div>
+ <div style={{ display:'flex', justifyContent:'space-between', marginTop:10, fontWeight:700, fontSize:`${11*fs}px`, fontFamily:bodyFont }}><span>Subject: {cfg.subjectName}</span><span>Class: {cfg.className}</span><span>Marks: {total}</span></div>
+ </div>
+ <div style={{ marginBottom:15, display:'flex', justifyContent:'space-between', fontSize:`${10*fs}px`, fontFamily:bodyFont }}><span>Student Name: __________________________</span><span>Date: {cfg.examDate}</span></div>
+ {renderPaperSections({ paper, cfg, questionTypes, half, printBubble, printAns, editMode, editStyle, fs, qFs, qFsSm, qFsHead, qBorderStyle, urdLineH, engLineH, letterSp, showAnsLines, showUrduHeaders, showSectionLine, themeColor:'#000', bodyFont, urduFont: resolveUrduFont(settings), isUrdu, isDual })}
  </div>
  )
 }
 
-const TEMPLATES = [
- { id:'docx-assessment', label:'DOCX Assessment', desc:'Exact clone of supplied Word paper format' },
- { id:'academic', label:'Academic Classic', desc:'Formal table-first paper layout' },
- { id:'classic', label:' AS Classic', desc:'Red dashed border, exact PDF replica' },
- { id:'modern', label:' Modern Pro', desc:'Gradient header, colored sections' },
- { id:'elite', label:' Elite Premium', desc:'Dark header, gold accents, Georgia serif' },
- { id:'emerald', label:' Emerald', desc:'Teal green header, fresh clean layout' },
- { id:'royal-elite', label:' Royal Elite', desc:'Elite layout with formal serif styling' },
- { id:'board-blue', label:' Board Blue', desc:'Structured table-heavy blue exam style' },
- { id:'compact-classic', label:' Compact Classic', desc:'Dense classic layout for tight papers' },
- { id:'serif-gold', label:' Serif Gold', desc:'Gold-accent paper with Book Antiqua feel' },
- { id:'clean-minimal', label:' Clean Minimal', desc:'Modern clean sheet with minimal structure' },
- { id:'exam-grid', label:' Exam Grid', desc:'Academic table-first grid layout' },
- { id:'scholar-classic', label:' Scholar Classic', desc:'Cambria-based classic exam surface' },
-]
+const TEMPLATES = [...CLASSIC_TEMPLATES, ...PREMIUM_TEMPLATE_PICKER]
 const PRINT_MODES = [
  { id:'a4', label:'Single A4', desc:'Full A4 paper (210mm × 297mm)' },
  { id:'half', label:'2 per A4', desc:'Two half-A4 papers stacked on one sheet' },
@@ -1285,31 +1625,12 @@ export default function PTSPaperGenerator({ loadedPaper, onReturnToSource = null
  const [subjectId, setSubjectId] = useState(null)
  const [selChapters, setSelChapters] = useState(new Set())
  const [selTopics, setSelTopics] = useState(new Set())
- const { questionTypes } = usePaperStore()
+ const { questionTypes: storeQuestionTypes } = usePaperStore()
+ const questionTypes = storeQuestionTypes || []
  const [paper, setPaper] = useState(() => {
  if (loadedPaper) {
- const p = { ...loadedPaper }
- questionTypes.forEach(t => {
- if (!p[t.value]) {
- const savedCategory = loadedPaper.selectedQuestions?.[t.value]
- const savedQuestions = Array.isArray(savedCategory) ? savedCategory : (Array.isArray(savedCategory?.questions) ? savedCategory.questions : [])
- if (savedQuestions.length) p[t.value] = savedQuestions
- else if (t.value === 'mcq') p.mcq = loadedPaper.selectedMCQ || []
- else if (t.value === 'short') p.short = loadedPaper.selectedShort || []
- else if (t.value === 'long') p.long = loadedPaper.selectedLong || []
- else p[t.value] = []
- }
- if (!p[`${t.value}_marks`]) {
- const savedCategory = loadedPaper.selectedQuestions?.[t.value]
- const savedMarks = Number(savedCategory?.marks)
- if (savedMarks) p[`${t.value}_marks`] = savedMarks
- else if (t.value === 'mcq') p.mcq_marks = loadedPaper.mcq_marks || 1
- else if (t.value === 'short') p.short_marks = loadedPaper.short_marks || 2
- else if (t.value === 'long') p.long_marks = loadedPaper.long_marks || 5
- else p[`${t.value}_marks`] = t.marks || 1
- }
- })
- return p
+ const built = buildPaperFromLoaded(loadedPaper, questionTypes)
+ if (built) return built
  }
  const initial = {}
  questionTypes.forEach(t => { initial[t.value] = []; initial[`${t.value}_marks`] = t.marks || 1 })
@@ -1343,8 +1664,8 @@ export default function PTSPaperGenerator({ loadedPaper, onReturnToSource = null
  {step==='syllabus' && (<SyllabusStep onSelect={id => { setSyllabusId(id); setStep('class') }} />)}
  {step==='class' && (<ClassStep syllabusId={syllabusId} onSelect={id => { setClassId(id); setStep('subject') }} onBack={() => setStep('syllabus')} />)}
  {step==='subject' && (<SubjectStep syllabusId={syllabusId} classId={classId} onSelect={id => { setSubjectId(id); setStep('chapters') }} onBack={() => setStep('class')} />)}
- {step==='chapters' && (<ChapterStep subjectId={subjectId} selectedChapters={selChapters} selectedTopics={selTopics} onChange={(c,t) => { setSelChapters(c); setSelTopics(t) }} onNext={() => setStep('questions')} onBack={() => setStep('subject')} />)}
- {step==='questions' && (<QuestionPanel subjectId={subjectId || 'loaded'} selectedChapters={selChapters} paper={paper} onPaperChange={setPaper} overrideConfig={loadedPaper?.config || null} loadedPaper={loadedPaper || null} uiTheme={uiTheme} onToggleTheme={() => setUiTheme(m => m === 'dark' ? 'light' : 'dark')} onBack={() => {
+ {step==='chapters' && (<ChapterStep subjectId={subjectId} syllabusId={syllabusId} selectedChapters={selChapters} selectedTopics={selTopics} onChange={(c,t) => { setSelChapters(c); setSelTopics(t) }} onNext={() => setStep('questions')} onBack={() => setStep('subject')} />)}
+ {step==='questions' && (<QuestionPanel subjectId={subjectId || 'loaded'} syllabusId={syllabusId} selectedChapters={selChapters} paper={paper} onPaperChange={setPaper} overrideConfig={loadedPaper?.config || null} loadedPaper={loadedPaper || null} uiTheme={uiTheme} onToggleTheme={() => setUiTheme(m => m === 'dark' ? 'light' : 'dark')} onBack={() => {
  if (loadedPaper && onReturnToSource) onReturnToSource();
  else setStep(loadedPaper ? 'syllabus' : 'chapters');
  }} />)}

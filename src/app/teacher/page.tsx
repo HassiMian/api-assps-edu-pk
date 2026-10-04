@@ -3,6 +3,7 @@
 import DashboardLayout from '@/components/DashboardLayout';
 import { Users, CalendarDays, BrainCircuit, AlertCircle, BookOpen, Clock, Activity, CheckCircle2, TrendingUp } from 'lucide-react';
 import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend } from 'recharts';
+import { useEffect, useState } from 'react';
 import { useAuth } from '@/context/AuthContext';
 import { useApiData } from '@/hooks/useApiData';
 import { useRouter } from 'next/navigation';
@@ -21,12 +22,17 @@ const EMPTY: any = {
 export default function TeacherDashboard() {
   const { user } = useAuth();
   const router   = useRouter();
+  const [chartsReady, setChartsReady] = useState(false);
   const { data, loading } = useApiData('/portal/dashboard', EMPTY);
 
+  useEffect(() => {
+    setChartsReady(true);
+  }, []);
+
   const stats    = data?.stats    || EMPTY.stats;
-  const trend    = data?.attendanceTrend    || EMPTY.attendanceTrend;
-  const classDist = data?.classDistribution || EMPTY.classDistribution;
-  const gender   = data?.genderData         || EMPTY.genderData;
+  const trend = Array.isArray(data?.attendanceTrend) ? data.attendanceTrend : EMPTY.attendanceTrend;
+  const classDist = Array.isArray(data?.classDistribution) ? data.classDistribution : EMPTY.classDistribution;
+  const gender = Array.isArray(data?.genderData) ? data.genderData : EMPTY.genderData;
   const notices  = data?.recentNotices      || [];
 
   const statCards = [
@@ -63,7 +69,8 @@ export default function TeacherDashboard() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
         <div className="glass-card p-6 lg:col-span-2">
           <h3 className="text-lg font-bold text-white mb-4">Weekly Attendance Trend</h3>
-          <div className="h-60">
+          <div className="h-60 min-h-[240px]">
+            {chartsReady && trend.length > 0 ? (
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={trend}>
                 <XAxis dataKey="name" stroke="#94a3b8" />
@@ -74,12 +81,16 @@ export default function TeacherDashboard() {
                 <Bar dataKey="absent"  fill="#ef4444" radius={[4,4,0,0]} name="Absent"  />
               </BarChart>
             </ResponsiveContainer>
+            ) : (
+              <p className="flex h-full items-center justify-center text-sm text-slate-500">No attendance trend data yet.</p>
+            )}
           </div>
         </div>
 
         <div className="glass-card p-6">
           <h3 className="text-lg font-bold text-white mb-4">Class Distribution</h3>
-          <div className="h-60">
+          <div className="h-60 min-h-[240px]">
+            {chartsReady && classDist.length > 0 ? (
             <ResponsiveContainer width="100%" height="100%">
               <PieChart>
                 <Pie data={classDist} cx="50%" cy="50%" innerRadius={50} outerRadius={80} paddingAngle={4} dataKey="value">
@@ -89,6 +100,9 @@ export default function TeacherDashboard() {
                 <Legend />
               </PieChart>
             </ResponsiveContainer>
+            ) : (
+              <p className="flex h-full items-center justify-center text-sm text-slate-500">No class distribution data yet.</p>
+            )}
           </div>
         </div>
       </div>
@@ -97,16 +111,20 @@ export default function TeacherDashboard() {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
         <div className="glass-card p-6">
           <h3 className="text-lg font-bold text-white mb-4">Gender Breakdown</h3>
-          <div className="h-52">
+          <div className="h-52 min-h-[208px]">
+            {chartsReady && gender.length > 0 ? (
             <ResponsiveContainer width="100%" height="100%">
               <PieChart>
-                <Pie data={gender} cx="50%" cy="50%" outerRadius={80} dataKey="value" label={({ name, value }) => `${name}: ${value}`}>
+                <Pie data={gender} cx="50%" cy="50%" outerRadius={80} dataKey="value" label={gender.length ? (({ name, value }: { name?: string; value?: number }) => `${name ?? ""}: ${value ?? 0}`) : false}>
                   <Cell fill="#3b82f6" />
                   <Cell fill="#ec4899" />
                 </Pie>
                 <Tooltip contentStyle={{ backgroundColor: '#1e293b', border: '1px solid #334155' }} />
               </PieChart>
             </ResponsiveContainer>
+            ) : (
+              <p className="flex h-full items-center justify-center text-sm text-slate-500">No gender breakdown data yet.</p>
+            )}
           </div>
         </div>
 

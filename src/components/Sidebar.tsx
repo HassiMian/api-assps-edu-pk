@@ -8,7 +8,7 @@ import {
   LayoutDashboard, Users, BookOpen, GraduationCap, Settings, CreditCard,
   FileText, BrainCircuit, MessageSquare, LogOut, Calendar, CheckSquare,
   Megaphone, BarChart3, Shield, ClipboardList, ArrowLeftRight, UserPlus,
-  Bus, Library, School, X, ChevronLeft, ChevronRight, Briefcase
+  Bus, Library, School, X, ChevronLeft, ChevronRight, Briefcase, Globe
 } from 'lucide-react';
 
 import { useSchoolBranding } from '@/hooks/useSchoolBranding';
@@ -35,12 +35,14 @@ const menus = {
     { name: 'Dashboard',      icon: LayoutDashboard, path: '/teacher', color: '#FF9F0A' },
     { name: 'Attendance',     icon: CheckSquare,     path: '/teacher/attendance', color: '#0A84FF' },
     { name: 'Marks',          icon: ClipboardList,   path: '/teacher/assessments', color: '#30D158' },
+    { name: 'Online Exams',   icon: Globe,           path: '/teacher/assessments/online-exams', color: '#22d3ee' },
     { name: 'Lessons',        icon: BookOpen,        path: '/teacher/academics', color: '#BF5AF2' },
     { name: 'Classes',        icon: Calendar,        path: '/teacher/classes', color: '#30D158' },
     { name: 'Papers',         icon: FileText,        path: '/teacher/paper-generator', color: '#A78BFA' },
   ],
   student: [
     { name: 'Dashboard',  icon: LayoutDashboard, path: '/student', color: '#FF9F0A' },
+    { name: 'Online Exams', icon: Globe,        path: '/student/exams', color: '#30D158' },
     { name: 'Quiz',       icon: BrainCircuit,   path: '/student/quiz', color: '#22d3ee' },
     { name: 'Homework',   icon: MessageSquare,  path: '/student/homework', color: '#30D158' },
     { name: 'Results',    icon: BarChart3,      path: '/student/ai-insights', color: '#BF5AF2' },

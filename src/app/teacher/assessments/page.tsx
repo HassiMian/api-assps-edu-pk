@@ -12,23 +12,8 @@ import {
   PieChart,
   Save,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode, type SelectHTMLAttributes } from "react";
 import Link from "next/link";
-
-const CLASSES = [
-  { label: "Grade 1-A", cls: "1", section: "A" },
-  { label: "Grade 2-A", cls: "2", section: "A" },
-  { label: "Grade 3-A", cls: "3", section: "A" },
-  { label: "Grade 4-A", cls: "4", section: "A" },
-  { label: "Grade 5-A", cls: "5", section: "A" },
-  { label: "Grade 6-A", cls: "6", section: "A" },
-  { label: "Grade 7-A", cls: "7", section: "A" },
-  { label: "Grade 8-A", cls: "8", section: "A" },
-  { label: "Grade 9-A", cls: "9", section: "A" },
-  { label: "Grade 9-B", cls: "9", section: "B" },
-  { label: "Grade 10-A", cls: "10", section: "A" },
-  { label: "Grade 10-B", cls: "10", section: "B" },
-];
 
 const SUBJECTS = [
   "Mathematics",
@@ -45,14 +30,6 @@ const SUBJECTS = [
 const SESSIONS = ["2026-2027", "2025-2026", "2024-2025"];
 const EXAM_TYPES = ["Monthly Test", "Unit Test", "Mid Term", "Final Term", "Quiz", "Assignment"];
 
-const FALLBACK_STUDENTS = [
-  { id: 1, name: "Ahmed Ali", gr_number: "GR-1001", roll_number: "1", class: "10", section: "A" },
-  { id: 2, name: "Fatima Khan", gr_number: "GR-1002", roll_number: "2", class: "10", section: "A" },
-  { id: 3, name: "Usman Raza", gr_number: "GR-1003", roll_number: "3", class: "10", section: "A" },
-  { id: 4, name: "Zara Sheikh", gr_number: "GR-1004", roll_number: "4", class: "10", section: "A" },
-  { id: 5, name: "Aisha Noor", gr_number: "GR-1005", roll_number: "5", class: "10", section: "A" },
-];
-
 type Student = {
   id: number;
   name: string;
@@ -60,6 +37,13 @@ type Student = {
   roll_number?: string;
   class?: string;
   section?: string;
+};
+
+type TeachingClass = {
+  label: string;
+  cls: string;
+  section: string;
+  subjects: string[];
 };
 
 type SavedRow = {
@@ -81,7 +65,7 @@ function Field({
   step,
 }: {
   label: string;
-  children: React.ReactNode;
+  children: ReactNode;
   step: string;
 }) {
   return (
@@ -95,7 +79,7 @@ function Field({
   );
 }
 
-function SelectBox(props: React.SelectHTMLAttributes<HTMLSelectElement>) {
+function SelectBox(props: SelectHTMLAttributes<HTMLSelectElement>) {
   return (
     <select
       {...props}
@@ -105,7 +89,8 @@ function SelectBox(props: React.SelectHTMLAttributes<HTMLSelectElement>) {
 }
 
 export default function TeacherExamination() {
-  const [classLabel, setClassLabel] = useState("Grade 10-A");
+  const [classes, setClasses] = useState<TeachingClass[]>([]);
+  const [classLabel, setClassLabel] = useState("");
   const [subject, setSubject] = useState("Physics");
   const [session, setSession] = useState("2026-2027");
   const [examType, setExamType] = useState("Monthly Test");
@@ -117,7 +102,44 @@ export default function TeacherExamination() {
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState<Toast>(null);
 
-  const selectedClass = CLASSES.find((item) => item.label === classLabel) || CLASSES[10];
+  const selectedClass = classes.find((item) => item.label === classLabel) || null;
+  const availableSubjects = selectedClass?.subjects?.length ? selectedClass.subjects : SUBJECTS;
+  useEffect(() => {
+    let cancelled = false;
+    api.get('/portal/teaching-options')
+      .then((res) => {
+        if (cancelled) return;
+        const rows = Array.isArray(res.data?.data?.classes) ? res.data.data.classes : [];
+        const mapped: TeachingClass[] = rows.map((row: any) => {
+          const cls = String(row.class_name || '').trim();
+          const section = String(row.section || '').trim();
+          return {
+            label: `Class ${cls}${section ? `-${section}` : ''}`,
+            cls,
+            section,
+            subjects: Array.isArray(row.subjects) ? row.subjects.filter(Boolean).map(String) : [],
+          };
+        }).filter((row: TeachingClass) => row.cls);
+        setClasses(mapped);
+        setClassLabel(mapped[0]?.label || '');
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setClasses([]);
+          setClassLabel('');
+        }
+      });
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    if (availableSubjects.length && !availableSubjects.includes(subject)) {
+      setSubject(availableSubjects[0]);
+    }
+    setStudents([]);
+    setMarks({});
+  }, [classLabel]);
+
   const enteredCount = Object.values(marks).filter((value) => value !== "").length;
 
   const average = useMemo(() => {
@@ -132,24 +154,22 @@ export default function TeacherExamination() {
   }
 
   async function loadStudents() {
+    if (!selectedClass) {
+      showToast('No class is assigned to this teacher account.', false);
+      return;
+    }
     setLoading(true);
     setMarks({});
     try {
-      const direct = await api.get(`/admin/students?class=${selectedClass.cls}&section=${selectedClass.section}`);
-      const directStudents = direct.data?.data || [];
-      if (direct.data?.success && directStudents.length) {
-        setStudents(directStudents);
-        return;
-      }
-
-      const all = await api.get("/admin/students");
-      const allStudents = all.data?.data || [];
-      const filtered = allStudents.filter(
-        (student: Student) => String(student.class) === selectedClass.cls && String(student.section || "A") === selectedClass.section
-      );
-      setStudents(filtered.length ? filtered : FALLBACK_STUDENTS);
+      const res = await api.get('/students', {
+        params: { active: true, class: selectedClass.cls, section: selectedClass.section || undefined },
+      });
+      const rows = Array.isArray(res.data?.data) ? res.data.data : [];
+      setStudents(rows);
+      if (!rows.length) showToast('No active students found in this assigned class.', false);
     } catch {
-      setStudents(FALLBACK_STUDENTS);
+      setStudents([]);
+      showToast('Students could not be loaded for this assigned class.', false);
     } finally {
       setLoading(false);
     }
@@ -162,6 +182,7 @@ export default function TeacherExamination() {
   }
 
   async function saveMarks() {
+    if (!selectedClass) { showToast('No assigned class selected.', false); return; }
     const entries = Object.entries(marks).filter(([, value]) => value !== "");
     if (!students.length) {
       showToast("Please load the students list first.", false);
@@ -179,13 +200,15 @@ export default function TeacherExamination() {
         type: examType,
         class: selectedClass.cls,
         section: selectedClass.section,
+        subject,
         session,
         total_marks: Number(totalMarks),
         pass_marks: Math.round(Number(totalMarks) * 0.33),
         start_date: new Date().toISOString().slice(0, 10),
       });
 
-      const examId = examRes.data?.data?.id || Date.now();
+      const examId = Number(examRes.data?.data?.id);
+      if (!Number.isInteger(examId) || examId <= 0) throw new Error('Exam creation did not return a valid ID.');
       const results = entries
         .map(([studentId, value]) => {
           const student = students.find((item) => item.id === Number(studentId));
@@ -271,7 +294,7 @@ export default function TeacherExamination() {
             </Link>
             <button
               onClick={loadStudents}
-              disabled={loading}
+              disabled={loading || !selectedClass}
               className="flex items-center gap-2 rounded-xl bg-blue-600 px-5 py-3 font-bold text-white transition hover:bg-blue-500 disabled:opacity-50"
             >
               {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Users className="h-4 w-4" />}
@@ -283,15 +306,16 @@ export default function TeacherExamination() {
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-5">
           <Field step="1" label="Class Select">
             <SelectBox value={classLabel} onChange={(event) => setClassLabel(event.target.value)}>
-              {CLASSES.map((item) => (
-                <option key={item.label}>{item.label}</option>
+              {!classes.length && <option value="">No assigned classes</option>}
+              {classes.map((item) => (
+                <option key={item.label} value={item.label}>{item.label}</option>
               ))}
             </SelectBox>
           </Field>
 
           <Field step="2" label="Subject Select">
             <SelectBox value={subject} onChange={(event) => setSubject(event.target.value)}>
-              {SUBJECTS.map((item) => (
+              {availableSubjects.map((item) => (
                 <option key={item}>{item}</option>
               ))}
             </SelectBox>

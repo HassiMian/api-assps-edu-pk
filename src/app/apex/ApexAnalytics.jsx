@@ -4,8 +4,8 @@ import Script from "next/script";
 
 /** Optional Google Analytics — set NEXT_PUBLIC_GA_ID in environment. */
 export default function ApexAnalytics() {
-  const gaId = process.env.NEXT_PUBLIC_GA_ID;
-  if (!gaId) return null;
+  const gaId = process.env.NEXT_PUBLIC_GA_ID?.trim();
+  if (!gaId || !/^G-[A-Z0-9]+$/i.test(gaId)) return null;
 
   return (
     <>

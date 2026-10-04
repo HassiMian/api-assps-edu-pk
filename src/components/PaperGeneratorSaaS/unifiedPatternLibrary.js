@@ -232,6 +232,308 @@ export const LOWER_CLASS_TYPES = [
   'Basic Grammar',
 ]
 
+const SUBJECT_ALIASES = {
+  bio: 'biology',
+  biology: 'biology',
+  phy: 'physics',
+  physics: 'physics',
+  chem: 'chemistry',
+  chemistry: 'chemistry',
+  math: 'mathematics',
+  maths: 'mathematics',
+  mathematics: 'mathematics',
+  'computer science': 'computer science',
+  cs: 'computer science',
+  'pak studies': 'pakistan studies',
+  'pakistan studies': 'pakistan studies',
+  islamiat: 'islamiyat',
+  islamiyat: 'islamiyat',
+  'tarjama-tul-quran': 'tarjuma-tul-quran',
+  science: 'science',
+  english: 'english',
+  urdu: 'urdu',
+}
+
+function normalizeSubjectKey(subject = '') {
+  const key = String(subject || '').toLowerCase().trim()
+  return SUBJECT_ALIASES[key] || key
+}
+
+function ordinalLabel(classLevel = '9') {
+  const map = {
+    1: '1st', 2: '2nd', 3: '3rd', 4: '4th', 5: '5th',
+    6: '6th', 7: '7th', 8: '8th', 9: '9th', 10: '10th', 11: '11th', 12: '12th',
+  }
+  return map[Number(classLevel)] || `${classLevel}th`
+}
+
+export function getClassTier(classLevel = '9') {
+  const level = Number(classLevel)
+  if (!Number.isFinite(level) || level <= 5) return 'primary'
+  if (level <= 8) return 'middle'
+  if (level <= 10) return 'matric'
+  return 'inter'
+}
+
+function cloneSections(sections = []) {
+  return sections.map(section => ({ ...section }))
+}
+
+function scalePatternForMiddle(base, classLevel) {
+  const cls = String(classLevel)
+  const isUrdu = base.layoutDirection === 'rtl'
+  const mcqSection = base.sections.find(section => section.type === 'MCQ')
+  const shortSection = base.sections.find(section => ['Short Question', 'Grammar', 'Quranic Words Meaning'].includes(section.type))
+  const longSection = base.sections.find(section => ['Long Question', 'Explanation', 'Essay', 'Theorem', 'Idiomatic Translation'].includes(section.type))
+  const sections = []
+  let questionNo = 1
+
+  if (mcqSection) {
+    sections.push({
+      ...mcqSection,
+      id: `${mcqSection.id}-mid`,
+      questionNo: questionNo++,
+      totalQuestions: 10,
+      attemptRequired: 10,
+      marksEach: 1,
+      marks: 10,
+    })
+  }
+  if (shortSection) {
+    sections.push({
+      ...shortSection,
+      id: `${shortSection.id}-mid`,
+      questionNo: questionNo++,
+      totalQuestions: 8,
+      attemptRequired: 5,
+      marksEach: 2,
+      marks: 10,
+    })
+  }
+  if (longSection) {
+    sections.push({
+      ...longSection,
+      id: `${longSection.id}-mid`,
+      questionNo: questionNo++,
+      totalQuestions: 3,
+      attemptRequired: 1,
+      marksEach: 5,
+      marks: 5,
+    })
+  }
+
+  return {
+    ...base,
+    id: `mid-${cls}-${base.id}`,
+    name: `${ordinalLabel(cls)} ${base.subject} Chapter Test`,
+    classLevel: cls,
+    subject: base.subject,
+    medium: base.medium,
+    board: 'School Assessment',
+    paperType: 'Chapter Test',
+    objectiveTime: '15 minutes',
+    objectiveMarks: sections[0]?.marks || 10,
+    subjectiveTime: '1 hour',
+    subjectiveMarks: sections.slice(1).reduce((sum, section) => sum + Number(section.marks || 0), 0),
+    layoutDirection: base.layoutDirection,
+    languageDirection: base.languageDirection,
+    exportRules: ['A4', 'chapter-test', 'clean-page-breaks'],
+    sections,
+    instructions: isUrdu
+      ? ['ضروری سوالات حل کریں۔', 'جوابات صاف لکھیں۔']
+      : ['Attempt required questions only.', 'Write answers clearly.'],
+  }
+}
+
+function clonePatternForMatric(base, classLevel) {
+  const cls = String(classLevel)
+  if (String(base.classLevel) === cls) {
+    return { ...base, sections: cloneSections(base.sections) }
+  }
+  return {
+    ...base,
+    id: base.id.replace('-9-', `-${cls}-`).replace('pb-9-', `pb-${cls}-`),
+    name: base.name.replace('9th', ordinalLabel(cls)),
+    classLevel: cls,
+    board: 'Punjab / BISE Gujranwala (Matric)',
+    objectiveTime: base.objectiveTime || '20 minutes',
+    subjectiveTime: cls === '10' ? '2 hours 30 minutes' : base.subjectiveTime,
+    sections: cloneSections(base.sections),
+    instructions: [...(base.instructions || [])],
+  }
+}
+
+function scalePatternForInter(base, classLevel) {
+  const cls = String(classLevel)
+  const sections = cloneSections(base.sections).map(section => {
+    if (section.type === 'MCQ') {
+      return {
+        ...section,
+        totalQuestions: 17,
+        attemptRequired: 17,
+        marksEach: 1,
+        marks: 17,
+      }
+    }
+    if (['Long Question', 'Explanation', 'Essay', 'Theorem'].includes(section.type)) {
+      const attemptRequired = Number(section.attemptRequired || 2)
+      const marksEach = section.type === 'Theorem' ? 6 : 8
+      return {
+        ...section,
+        marksEach,
+        marks: attemptRequired * marksEach,
+      }
+    }
+    return section
+  })
+  const objectiveMarks = sections.filter(section => section.type === 'MCQ').reduce((sum, section) => sum + Number(section.marks || 0), 0)
+  const subjectiveMarks = sections.filter(section => section.type !== 'MCQ').reduce((sum, section) => sum + Number(section.marks || 0), 0)
+
+  return {
+    ...base,
+    id: base.id.replace('pb-9-', `pb-${cls}-`).replace('-9-', `-${cls}-`),
+    name: base.name.replace('9th', ordinalLabel(cls)).replace('Board Pattern', 'Inter Board Pattern'),
+    classLevel: cls,
+    board: 'Punjab / BISE Gujranwala (Intermediate)',
+    paperType: 'Board Pattern Paper',
+    objectiveTime: '20 minutes',
+    subjectiveTime: '3 hours',
+    objectiveMarks,
+    subjectiveMarks,
+    sections,
+    instructions: [...(base.instructions || [])],
+  }
+}
+
+function buildPrimarySchoolPattern({ classLevel, subject, medium }) {
+  const cls = String(classLevel)
+  const normalizedSubject = subject || 'Science'
+  const normalizedMedium = medium || (['Urdu', 'Islamiyat'].includes(normalizedSubject) ? 'Urdu' : 'English')
+  const isUrdu = normalizedMedium.toLowerCase() === 'urdu' || ['Urdu', 'Islamiyat'].includes(normalizedSubject)
+
+  return {
+    id: `primary-${cls}-${normalizeSubjectKey(normalizedSubject).replace(/\s+/g, '-')}`,
+    name: `Class ${cls} ${normalizedSubject} Worksheet`,
+    classLevel: cls,
+    subject: normalizedSubject,
+    medium: normalizedMedium,
+    board: 'School Worksheet',
+    paperType: 'Worksheet',
+    objectiveTime: '10 minutes',
+    objectiveMarks: 5,
+    subjectiveTime: '40 minutes',
+    subjectiveMarks: 15,
+    layoutDirection: isUrdu ? 'rtl' : 'ltr',
+    languageDirection: isUrdu ? 'rtl' : 'ltr',
+    exportRules: ['A4', 'primary-worksheet', 'clean-page-breaks'],
+    sections: [
+      { id: 'mcq', title: isUrdu ? 'درست جواب منتخب کریں' : 'Circle the Correct Answer', questionNo: 1, type: 'MCQ', totalQuestions: 5, attemptRequired: 5, marksEach: 1, marks: 5, allowedCategories: ['Objective', 'Circle the Correct Answer'] },
+      { id: 'fill', title: isUrdu ? 'خالی جگہیں پُر کریں' : 'Fill in the Blanks', questionNo: 2, type: 'Fill in the Blanks', totalQuestions: 5, attemptRequired: 5, marksEach: 1, marks: 5, allowedCategories: ['Fill in the Blanks', 'Basic Grammar'] },
+      { id: 'short', title: isUrdu ? 'مختصر جوابات' : 'Short Answers', questionNo: 3, type: 'Short Question', totalQuestions: 5, attemptRequired: 5, marksEach: 2, marks: 10, allowedCategories: ['Short Answers', 'Reading Comprehension'] },
+    ],
+    instructions: isUrdu
+      ? ['تمام سوالات حل کریں۔', 'لکھائی صاف ہو۔']
+      : ['Attempt all questions.', 'Write neatly.'],
+  }
+}
+
+function findMatricBasePattern(subject, medium) {
+  const subjectKey = normalizeSubjectKey(subject)
+  const normalizedMedium = String(medium || '').toLowerCase()
+  return UNIFIED_PATTERN_LIBRARY.find(pattern =>
+    String(pattern.classLevel) === '9' &&
+    normalizeSubjectKey(pattern.subject) === subjectKey &&
+    (!medium || String(pattern.medium || '').toLowerCase() === normalizedMedium || normalizedMedium === 'dual medium')
+  ) || UNIFIED_PATTERN_LIBRARY.find(pattern => normalizeSubjectKey(pattern.subject) === subjectKey)
+}
+
+function buildExtendedPatternLibrary() {
+  const seen = new Set()
+  const patterns = []
+
+  const push = (pattern) => {
+    if (!pattern?.id || seen.has(pattern.id)) return
+    seen.add(pattern.id)
+    patterns.push(pattern)
+  }
+
+  UNIFIED_PATTERN_LIBRARY.forEach(push)
+  UNIFIED_PATTERN_LIBRARY.forEach(base => {
+    ;['6', '7', '8'].forEach(classLevel => push(scalePatternForMiddle(base, classLevel)))
+    push(clonePatternForMatric(base, '10'))
+    ;['11', '12'].forEach(classLevel => push(scalePatternForInter(base, classLevel)))
+  })
+  ;['1', '2', '3', '4', '5'].forEach(classLevel => {
+    ;['Science', 'Mathematics', 'Urdu', 'English'].forEach(subject => {
+      push(buildPrimarySchoolPattern({
+        classLevel,
+        subject,
+        medium: subject === 'Urdu' ? 'Urdu' : 'English',
+      }))
+    })
+  })
+
+  return patterns
+}
+
+export const EXTENDED_PATTERN_LIBRARY = buildExtendedPatternLibrary()
+
+export function listPatternsForSelection({ classLevel, subject, medium } = {}) {
+  const subjectKey = normalizeSubjectKey(subject)
+  const cls = String(classLevel || '')
+  const normalizedMedium = String(medium || '').toLowerCase()
+
+  return EXTENDED_PATTERN_LIBRARY.filter(pattern => {
+    const classMatch = !cls || String(pattern.classLevel) === cls
+    const subjectMatch = !subjectKey || normalizeSubjectKey(pattern.subject) === subjectKey
+    const mediumMatch = !normalizedMedium
+      || String(pattern.medium || '').toLowerCase() === normalizedMedium
+      || normalizedMedium === 'dual medium'
+    return classMatch && subjectMatch && mediumMatch
+  })
+}
+
+export function buildNumberedQuestionPattern({
+  classLevel,
+  subject,
+  medium,
+  questions = [],
+  totalMarks,
+  assessmentTitle,
+}) {
+  const normalizedMedium = String(medium || 'English')
+  const isUrdu = normalizedMedium.toLowerCase() === 'urdu'
+  const sectionMarks = questions.reduce((sum, question) => sum + Number(question.marks || 2), 0)
+  return {
+    id: `numbered-assessment-${String(classLevel || '9')}-${String(subject || 'generic').toLowerCase().replace(/\s+/g, '-')}`,
+    name: assessmentTitle || `${classLevel || 'Class'} ${subject || 'Subject'} Assessment`,
+    classLevel: String(classLevel || '9'),
+    subject: subject || 'Assessment',
+    medium: normalizedMedium,
+    board: 'School Assessment',
+    paperType: 'Assessment',
+    structureMode: 'numbered',
+    totalMarks: Number(totalMarks || sectionMarks || 0),
+    layoutDirection: isUrdu ? 'rtl' : 'ltr',
+    languageDirection: isUrdu ? 'rtl' : 'ltr',
+    exportRules: ['A4', 'numbered-assessment', 'clean-page-breaks'],
+    sections: questions.map((question, index) => ({
+      id: `nq-${question.number || index + 1}`,
+      title: question.prompt || `Question ${question.number || index + 1}`,
+      questionNo: Number(question.number || index + 1),
+      type: question.type || 'Short Question',
+      totalQuestions: 1,
+      attemptRequired: 1,
+      marksEach: Number(question.marks || 2),
+      marks: Number(question.marks || 2),
+      allowedCategories: [question.category || question.type || 'Short Question'],
+    })),
+    instructions: isUrdu
+      ? ['تمام سوالات حل کریں۔', 'جوابات واضح لکھیں۔']
+      : ['Attempt all questions.', 'Write answers clearly and neatly.'],
+  }
+}
+
 function buildSchoolAssessmentPattern({ classLevel, subject, medium }) {
   const normalizedMedium = String(medium || 'English')
   const isUrdu = normalizedMedium.toLowerCase() === 'urdu'
@@ -261,29 +563,47 @@ function buildSchoolAssessmentPattern({ classLevel, subject, medium }) {
   }
 }
 
-export function findUnifiedPattern({ classLevel, subject, medium }) {
+export function findUnifiedPattern(opts = {}) {
+  const {
+    classLevel,
+    subject,
+    medium,
+    intent,
+    paperType,
+  } = opts || {}
+
   const normalizedSubject = String(subject || '').toLowerCase().trim()
   const normalizedMedium = String(medium || '').toLowerCase()
-  const normalizedIntent = String(arguments[0]?.intent || '').toLowerCase()
-  const normalizedPaperType = String(arguments[0]?.paperType || '').toLowerCase()
-  const aliases = {
-    bio: 'biology',
-    biology: 'biology',
-    phy: 'physics',
-    physics: 'physics',
-    chem: 'chemistry',
-    chemistry: 'chemistry',
-    math: 'mathematics',
-    maths: 'mathematics',
-    mathematics: 'mathematics',
-  }
-  const subjectKey = aliases[normalizedSubject] || normalizedSubject
+  const normalizedIntent = String(intent || '').toLowerCase()
+  const normalizedPaperType = String(paperType || '').toLowerCase()
+  const subjectKey = normalizeSubjectKey(normalizedSubject)
+  const tier = getClassTier(classLevel)
+
   if (normalizedIntent.includes('assessment') || normalizedPaperType.includes('assessment')) {
     return buildSchoolAssessmentPattern({ classLevel, subject, medium })
   }
-  return UNIFIED_PATTERN_LIBRARY.find(pattern =>
+
+  const exact = EXTENDED_PATTERN_LIBRARY.find(pattern =>
     String(pattern.classLevel) === String(classLevel || '') &&
-    String(pattern.subject || '').toLowerCase() === subjectKey &&
+    normalizeSubjectKey(pattern.subject) === subjectKey &&
     (!medium || String(pattern.medium || '').toLowerCase() === normalizedMedium || normalizedMedium === 'dual medium')
-  ) || UNIFIED_PATTERN_LIBRARY.find(pattern => String(pattern.subject || '').toLowerCase() === subjectKey) || UNIFIED_PATTERN_LIBRARY[0]
+  )
+  if (exact) return exact
+
+  const matricBase = findMatricBasePattern(subject, medium)
+  if (tier === 'primary') {
+    return buildPrimarySchoolPattern({ classLevel, subject, medium })
+  }
+  if (tier === 'middle' && matricBase) {
+    return scalePatternForMiddle(matricBase, classLevel)
+  }
+  if (tier === 'matric' && matricBase) {
+    return clonePatternForMatric(matricBase, classLevel || '9')
+  }
+  if (tier === 'inter' && matricBase) {
+    return scalePatternForInter(matricBase, classLevel || '12')
+  }
+
+  return EXTENDED_PATTERN_LIBRARY.find(pattern => normalizeSubjectKey(pattern.subject) === subjectKey)
+    || UNIFIED_PATTERN_LIBRARY[0]
 }

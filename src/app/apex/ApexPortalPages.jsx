@@ -18,6 +18,7 @@ import { apexPlans, backendReadyModels, tenantActivationSteps } from "./ApexPort
 import ApexPortalHeader from "./ApexPortalHeader";
 import ApexSubmittedBanner from "./ApexSubmittedBanner";
 import { trackApexEvent, APEX_EVENTS } from "./apexFunnel";
+import PremiumTemplateShowcase from "./PremiumTemplateShowcase";
 
 const inputClass =
   "w-full rounded-2xl border border-white/10 bg-white/[0.055] px-4 py-3 text-sm text-white outline-none transition placeholder:text-slate-500 focus:border-cyan-300/50 focus:ring-2 focus:ring-cyan-300/15";
@@ -347,7 +348,7 @@ export function ApexOnboardingPage() {
 
 export function ApexFeaturesPage() {
   const features = [
-    ["AI Paper Generator", "Board-pattern, Urdu/English, question bank and print-ready papers."],
+    ["AI Paper Generator", "16 templates, real DOCX export, multi-set papers, and online exam publish."],
     ["Daily Diary and Homework", "Teacher workflow connected to students and parents."],
     ["Fees and Finance", "Collection visibility, alerts, ledgers and reports."],
     ["Attendance and Monitoring", "Live trends for owners, admins, teachers and parents."],
@@ -355,17 +356,20 @@ export function ApexFeaturesPage() {
     ["Tenant Isolation", "Every real school runs inside its own schoolId and tenantId boundary."],
   ];
   return (
-    <ApexPortalShell eyebrow="Features" title="A connected AI operating system for schools" subtitle="Every module is designed to flow into one tenant-safe command center.">
-      <div className="grid gap-5 md:grid-cols-2 lg:grid-cols-3">
-        {features.map(([title, detail]) => (
-          <Link key={title} href="/apex/demo-request" className="rounded-[2rem] border border-white/10 bg-white/[0.055] p-6 transition hover:-translate-y-1 hover:border-cyan-300/30">
-            <Sparkles className="h-5 w-5 text-cyan-300" />
-            <h3 className="mt-5 text-xl font-black">{title}</h3>
-            <p className="mt-3 text-sm leading-7 text-slate-400">{detail}</p>
-          </Link>
-        ))}
-      </div>
-    </ApexPortalShell>
+    <>
+      <ApexPortalShell eyebrow="Features" title="A connected AI operating system for schools" subtitle="Every module is designed to flow into one tenant-safe command center.">
+        <div className="grid gap-5 md:grid-cols-2 lg:grid-cols-3">
+          {features.map(([title, detail]) => (
+            <Link key={title} href="/apex/demo-request" className="rounded-[2rem] border border-white/10 bg-white/[0.055] p-6 transition hover:-translate-y-1 hover:border-cyan-300/30">
+              <Sparkles className="h-5 w-5 text-cyan-300" />
+              <h3 className="mt-5 text-xl font-black">{title}</h3>
+              <p className="mt-3 text-sm leading-7 text-slate-400">{detail}</p>
+            </Link>
+          ))}
+        </div>
+      </ApexPortalShell>
+      <PremiumTemplateShowcase />
+    </>
   );
 }
 

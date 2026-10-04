@@ -22,6 +22,7 @@ type MissingIdentity = {
   missing_student?: boolean;
   missing_parent?: boolean;
   requires_guardian_contact?: boolean;
+  requires_guardian_review?: boolean;
 };
 type IssuedIdentity = {
   kind: string;
@@ -31,6 +32,9 @@ type IssuedIdentity = {
   temporaryPassword: string | null;
 };
 
+type ActivationRecord = { id: number; user_id: number; portal_role: string; state: string; name: string; login_id: string; must_change_password: boolean };
+type ActivationCredential = { id: number; role: string; loginId: string; temporaryPassword: string };
+
 export default function AdminUsers() {
   const [users, setUsers] = useState<UserData[]>([]);
   const { user } = useAuth();
@@ -38,9 +42,59 @@ export default function AdminUsers() {
   const [issued, setIssued] = useState<IssuedIdentity[] | null>(null);
   const [repairing, setRepairing] = useState<string | null>(null);
   const [repairError, setRepairError] = useState('');
+  const [activations, setActivations] = useState<ActivationRecord[]>([]);
+  const [activationCredential, setActivationCredential] = useState<ActivationCredential | null>(null);
+  const [verifiedRecipients, setVerifiedRecipients] = useState<Record<number,boolean>>({});
+  const [activationBusy, setActivationBusy] = useState<number | null>(null);
+  const [activationReason, setActivationReason] = useState<Record<number,string>>({});
+  const loadActivations = async () => {
+    try {
+      const response = await api.get('/auth/users/pending-activation');
+      if (response.data?.success) setActivations(response.data.data || []);
+    } catch {
+      setRepairError('Unable to load pending credential handoffs.');
+    }
+  };
+  const issueActivation = async (record:ActivationRecord) => {
+    setActivationBusy(record.id); setRepairError('');
+    try {
+      const response = await api.post(`/auth/users/pending-activation/${record.id}/issue`, {
+        recipientVerified: verifiedRecipients[record.id] === true,
+        ...(record.state === 'issued' ? { reissue:true,reissueReason:activationReason[record.id]||'' } : {}),
+      });
+      if(response.data?.success){setActivationCredential(response.data.data);await loadActivations();}
+    } catch(err:any){setRepairError(err?.response?.data?.message || 'Credential issuance failed.');}
+    finally{setActivationBusy(null);}
+  };
+  const confirmActivation = async () => {
+    if(!activationCredential)return;
+    setActivationBusy(activationCredential.id);setRepairError('');
+    try {
+      await api.post(`/auth/users/pending-activation/${activationCredential.id}/confirm`, {deliveredPrivately:true});
+      setActivationCredential(null);await loadActivations();
+    }catch(err:any){setRepairError(err?.response?.data?.message||'Private handoff confirmation failed.');}
+    finally{setActivationBusy(null);}
+  };
+
   const [guardianPhones, setGuardianPhones] = useState<Record<number, string>>({});
   const [guardianVerified, setGuardianVerified] = useState<Record<number, boolean>>({});
   const [savingGuardian, setSavingGuardian] = useState<number | null>(null);
+  const [distinctGuardianNames, setDistinctGuardianNames] = useState<Record<number,string>>({});
+  const [distinctVerified, setDistinctVerified] = useState<Record<number,boolean>>({});
+  const saveDistinctGuardian = async (studentId:number) => {
+    setSavingGuardian(studentId);setRepairError('');
+    try {
+      await api.post('/auth/users/resolve-distinct-guardian', {
+        studentId, verifiedGuardianName:distinctGuardianNames[studentId]||'',
+        distinctGuardianVerified:distinctVerified[studentId]===true,
+      });
+      setDistinctGuardianNames(prev=>({...prev,[studentId]:''}));
+      setDistinctVerified(prev=>({...prev,[studentId]:false}));
+      await Promise.all([loadMissing(),loadActivations(),fetchAllUsers()]);
+    }catch(err:any){setRepairError(err?.response?.data?.message||'Guardian identity could not be resolved.');}
+    finally{setSavingGuardian(null);}
+  };
+
   const saveGuardianContact = async (studentId: number) => {
     setSavingGuardian(studentId);
     setRepairError('');
@@ -115,7 +169,7 @@ export default function AdminUsers() {
   };
 
   useEffect(() => {
-    if (user) { fetchAllUsers(); loadMissing(); }
+    if (user) { fetchAllUsers(); loadMissing(); loadActivations(); }
   }, [user]);
 
   const handleAddUser = async (e: React.FormEvent) => {
@@ -205,6 +259,13 @@ export default function AdminUsers() {
                     {savingGuardian === item.id ? 'Saving...' : 'Save verified guardian contact'}
                   </button>
                 </div>
+              ) : item.requires_guardian_review ? (
+                <div className="space-y-2 w-full md:max-w-sm">
+                  <p className="text-xs text-amber-300">The contact number appears against different guardian names. Verify whether this is a spelling issue or separate households. For a spelling error, correct the underlying student record first. For independently verified separate guardians, create an isolated parent identity below.</p>
+                  <input type="text" value={distinctGuardianNames[item.id]||''} onChange={e=>setDistinctGuardianNames(prev=>({...prev,[item.id]:e.target.value}))} placeholder="Independently verified guardian name" className="w-full rounded-lg border border-slate-600 bg-slate-900 px-3 py-2 text-white" />
+                  <label className="flex gap-2 items-start text-xs text-slate-300"><input type="checkbox" checked={distinctVerified[item.id]===true} onChange={e=>setDistinctVerified(prev=>({...prev,[item.id]:e.target.checked}))} />I checked this particular student's actual guardian and verified that an isolated parent login is required.</label>
+                  <button type="button" disabled={!distinctVerified[item.id]||(distinctGuardianNames[item.id]||'').trim().length<3||savingGuardian!==null} onClick={()=>saveDistinctGuardian(item.id)} className="rounded-lg border border-amber-500/40 px-3 py-2 text-white disabled:opacity-40">{savingGuardian===item.id?'Resolving...':'Create verified separate guardian'}</button>
+                </div>
               ) : <button type="button" disabled={repairing !== null || issued !== null} onClick={() => repairOne('student', item.id)} className="rounded-lg bg-blue-600 px-3 py-2 text-white disabled:opacity-40">{repairing === `student-${item.id}` ? 'Repairing...' : 'Issue linked login'}</button>}
             </div>
           ))}
@@ -225,6 +286,29 @@ export default function AdminUsers() {
           </div>)}
           <button type="button" onClick={() => setIssued(null)} className="rounded-lg border border-slate-600 px-4 py-2 text-white">I have securely handed over the credentials — clear display</button>
         </div>}
+      </section>
+
+      <section className="glass-card p-5 mb-6 space-y-4" aria-label="Pending portal activation">
+        <h2 className="text-lg font-semibold text-white">Verified credential handoff</h2>
+        <p className="text-sm text-slate-400">Prepared accounts have unknown random passwords until you verify the actual recipient and issue a one-time activation credential. Never send shared family credentials through public groups.</p>
+        <p className="text-sm text-slate-300">Pending: {activations.filter(a=>a.state==='pending').length} · Issued, not confirmed: {activations.filter(a=>a.state==='issued').length} · Delivered: {activations.filter(a=>a.state==='delivered').length}</p>
+        {activationCredential && <div className="border border-amber-500/40 rounded-xl p-4 bg-slate-900 space-y-2">
+          <p className="font-semibold text-amber-300">One-time credential — private handoff only</p>
+          <p className="text-white">{activationCredential.role}: {activationCredential.loginId}</p>
+          <p className="break-all text-amber-200">Temporary password: {activationCredential.temporaryPassword}</p>
+          <p className="text-xs text-slate-400">The recipient must change this password on first sign-in. Only confirm delivery once the correct recipient has it. Clearing this screen cannot retrieve the previous password.</p>
+          <button type="button" disabled={activationBusy!==null} onClick={confirmActivation} className="rounded-lg bg-emerald-700 px-4 py-2 text-white">Confirmed privately delivered — clear credential</button>
+          <button type="button" onClick={()=>setActivationCredential(null)} className="ml-2 rounded-lg border border-slate-600 px-3 py-2 text-white">Clear without confirming (requires reissue)</button>
+        </div>}
+        <div className="space-y-2 max-h-80 overflow-y-auto">
+          {activations.filter(a=>a.state!=='delivered').map(record=><div key={record.id} className="rounded-lg border border-slate-700 p-3 text-sm space-y-2">
+            <p className="text-white">{record.name} · {record.portal_role} <span className="text-slate-400">{record.login_id} · {record.state}</span></p>
+            <label className="flex items-start gap-2 text-xs text-slate-300"><input type="checkbox" checked={verifiedRecipients[record.id]===true} onChange={e=>setVerifiedRecipients(prev=>({...prev,[record.id]:e.target.checked}))}/>
+              I independently verified the recipient from school records or in person and can hand them the credential privately.</label>
+            {record.state==='issued' && <input type="text" value={activationReason[record.id]||''} onChange={e=>setActivationReason(prev=>({...prev,[record.id]:e.target.value}))} placeholder="Reason a lost credential needs reissue" className="w-full rounded-lg bg-slate-900 border border-slate-600 p-2 text-white"/>}
+            <button type="button" disabled={!verifiedRecipients[record.id]||activationBusy!==null||activationCredential!==null||(record.state==='issued'&&(activationReason[record.id]||'').trim().length<8)} onClick={()=>issueActivation(record)} className="rounded-lg bg-blue-600 px-3 py-2 text-white disabled:opacity-40">{activationBusy===record.id?'Issuing...':record.state==='issued'?'Reissue after verification':'Issue one-time credential'}</button>
+          </div>)}
+        </div>
       </section>
 
       <div className="glass-card overflow-hidden">

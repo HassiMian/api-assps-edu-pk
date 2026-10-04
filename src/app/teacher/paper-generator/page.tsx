@@ -1,7 +1,7 @@
 "use client";
 
 import DashboardLayout from "@/components/DashboardLayout";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import PTSPaperGenerator from "@/components/PaperGeneratorSaaS/PTSPaperGenerator";
 import AIGeneratorTab from "@/components/PaperGeneratorSaaS/AIGeneratorTab";
 import ManualPaperTab from "@/components/PaperGeneratorSaaS/ManualPaperTab";
@@ -15,6 +15,10 @@ import QuestionBankBrowser from "@/components/PaperGeneratorSaaS/QuestionBankBro
 import { usePaperStore } from "@/components/PaperGeneratorSaaS/usePaperStore";
 import BoardPaperGenerator from "@/components/PaperGeneratorSaaS/BoardPaperGenerator";
 import UnifiedPaperGenerator from "@/components/PaperGeneratorSaaS/UnifiedPaperGenerator";
+import SavedPapersTab from "@/components/PaperGeneratorSaaS/SavedPapersTab";
+import SettingsTab from "@/components/PaperGeneratorSaaS/SettingsTab";
+import ConnectOnlineExamWizard from "@/components/OnlineExam/ConnectOnlineExamWizard";
+import PaperAiJobToasts from "@/components/PaperGeneratorSaaS/PaperAiJobToasts";
 import { useAuth } from "@/context/AuthContext";
 
 const C = {
@@ -22,13 +26,16 @@ const C = {
   muted:'#94A3B8', border:'rgba(148,163,184,0.18)',
 }
 
-type TabId = 'build' | 'unified' | 'board' | 'qbank' | 'manual' | 'ai' | 'import' | 'scan' | 'notes' | 'diary' | 'lesson'
+type TabId = 'build' | 'unified' | 'board' | 'qbank' | 'saved' | 'settings' | 'manual' | 'ai' | 'import' | 'scan' | 'notes' | 'diary' | 'lesson' | 'online'
 
 const TABS: { id: TabId; label: string; adminOnly?: boolean }[] = [
   { id: 'build', label: 'School Paper' },
+  { id: 'online', label: 'Online Test' },
   { id: 'unified', label: 'Unified Paper Generator' },
+  { id: 'saved', label: 'Saved Papers' },
   { id: 'board', label: 'Board Paper' },
   { id: 'qbank', label: 'Question Bank' },
+  { id: 'settings', label: 'Settings' },
   { id: 'import', label: 'AI Import PDF' },
   { id: 'manual', label: 'Manual Entry' },
   { id: 'ai', label: 'AI Generator' },
@@ -61,6 +68,14 @@ export default function TeacherPaperGenerator() {
   const [activeTab, setActiveTab] = useState<TabId>("build");
   const [loadedPaper, setLoadedPaper] = useState<any>(null);
 
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const tab = new URLSearchParams(window.location.search).get("tab");
+    if (tab && TEACHER_TABS.some((t) => t.id === tab)) {
+      setActiveTab(tab as TabId);
+    }
+  }, []);
+
   const handleProceedToPreview = (paper: any) => {
     setLoadedPaper(paper);
     setActiveTab('build');
@@ -68,6 +83,7 @@ export default function TeacherPaperGenerator() {
 
   return (
     <DashboardLayout role="teacher" title="Paper Generator">
+      <PaperAiJobToasts />
       <div className="overflow-hidden rounded-3xl border border-slate-700/60 bg-[#0b2747] shadow-2xl min-h-[85vh]">
 
         {/* Tab strip */}
@@ -93,7 +109,15 @@ export default function TeacherPaperGenerator() {
         {/* Tab content */}
         <div className="paper-generator-content" style={{ padding: '24px' }}>
           {activeTab === 'build' && <PTSPaperGenerator loadedPaper={loadedPaper} />}
+          {activeTab === 'online' && <ConnectOnlineExamWizard />}
           {activeTab === 'unified' && <UnifiedPaperGenerator />}
+          {activeTab === 'saved' && (
+            <SavedPapersTab onLoadPaper={(paper: any) => {
+              setLoadedPaper(paper);
+              setActiveTab(paper?.sourceTab === 'unified' || paper?.paperSource === 'unified-paper-generator' ? 'unified' : 'build');
+            }} />
+          )}
+          {activeTab === 'settings' && <SettingsTab />}
           {activeTab === 'board' && <BoardPaperGenerator loadedPaper={loadedPaper} />}
           {activeTab === 'qbank' && <QuestionBankBrowser />}
           {activeTab === 'import' && <AIImportTab />}

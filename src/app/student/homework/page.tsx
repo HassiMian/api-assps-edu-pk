@@ -89,7 +89,7 @@ export default function StudentHomework() {
               </div>
             </div>
             <div className="bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs font-medium px-3 py-1.5 rounded-lg flex items-center gap-1.5">
-              <Sparkles className="w-3.5 h-3.5" /> Live mode
+              <Sparkles className="w-3.5 h-3.5" /> {selectedTask ? 'Live assignment' : 'Backend pending'}
             </div>
           </div>
 
@@ -128,8 +128,9 @@ export default function StudentHomework() {
                   type="text"
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
-                  placeholder="Ask for a hint, explain your thought process..."
-                  className="w-full bg-slate-900 border border-slate-700 text-white rounded-xl pl-4 pr-12 py-3 focus:outline-none focus:ring-2 focus:ring-cyan-500"
+                  placeholder={selectedTask ? "Ask for a hint, explain your thought process..." : "No live assignment is connected yet"}
+                  disabled={!selectedTask}
+                  className="w-full bg-slate-900 border border-slate-700 text-white rounded-xl pl-4 pr-12 py-3 focus:outline-none focus:ring-2 focus:ring-cyan-500 disabled:opacity-50"
                 />
                 <button type="button" title="Hint" className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-cyan-400 transition-colors">
                   <Lightbulb className="w-5 h-5" />
@@ -137,7 +138,7 @@ export default function StudentHomework() {
               </div>
               <button
                 type="submit"
-                disabled={!input.trim()}
+                disabled={!selectedTask || !input.trim()}
                 className="bg-cyan-600 hover:bg-cyan-500 disabled:opacity-50 disabled:cursor-not-allowed text-white p-3 rounded-xl transition-colors shadow-lg shadow-cyan-500/20"
               >
                 <Send className="w-5 h-5" />

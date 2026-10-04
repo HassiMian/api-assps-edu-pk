@@ -74,18 +74,13 @@ export default function ApexCinematicNavbar() {
       <div
         className="apex-mobile-menu-overlay lg:hidden"
         data-open={mobileOpen ? "true" : "false"}
-        style={{ opacity: mobileOpen ? 1 : 0, pointerEvents: mobileOpen ? "auto" : "none" }}
         onClick={() => setMobileOpen(false)}
-        aria-hidden
+        aria-hidden={!mobileOpen}
       />
       <aside
         className="apex-mobile-drawer flex flex-col overflow-hidden rounded-2xl border border-white/10 bg-slate-950/95 backdrop-blur-xl lg:hidden"
         data-open={mobileOpen ? "true" : "false"}
-        style={{
-          opacity: mobileOpen ? 1 : 0,
-          pointerEvents: mobileOpen ? "auto" : "none",
-          transform: mobileOpen ? "translateX(0)" : "translateX(calc(100% + 1rem))",
-        }}
+        inert={!mobileOpen}
         aria-hidden={!mobileOpen}
       >
         <div className="flex items-center justify-between border-b border-white/10 px-4 py-3">

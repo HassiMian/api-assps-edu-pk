@@ -1,10 +1,60 @@
 'use client'
 // usePaperStore.js — Al Siddique Smart School OS
 import { useState, useEffect } from 'react'
-import api from '@/utils/api'
+import {
+  deletePaperOnServer,
+  fetchSavedPapersFromServer,
+  isPaperVaultAvailable,
+  mergeVaultPapers,
+  renamePaperOnServer,
+  savePaperToServer,
+  notifyAdminPaperSaved,
+} from './paperVaultService'
+import {
+  bulkApproveQuestionsToServer,
+  deleteQuestionOnServer,
+  fetchQuestionsFromServer,
+  isQuestionBankAvailable,
+  mapServerRowToLocal,
+  mergeQuestionBank,
+  postQuestionToServer,
+  subjectKey,
+  updateQuestionOnServer,
+} from './questionBankService'
 
 const STORE_KEY = 'al_siddique_paper_store'
 const STORE_SYNC_EVENT = 'al_siddique_paper_store_updated'
+
+const SUBJECT_CATEGORY_MAP = {
+  urdu: ['mcq', 'wahid_jama', 'mutradif', 'mutzad', 'sentence_correction', 'sentence_usage', 'alfaz_maani', 'comprehension', 'essay', 'letter', 'muhawara', 'grammar'],
+  english: ['mcq', 'true_false', 'fill', 'translation', 'essay', 'letter', 'comprehension', 'sentence_correction', 'sentence_usage', 'grammar'],
+  default: ['mcq', 'short', 'long', 'diagram', 'numerical', 'definition', 'columns', 'true_false', 'fill'],
+}
+
+function getFilteredTypes(subjectName, allTypes) {
+  if (!subjectName) return allTypes
+  const s = String(subjectName).toLowerCase().trim()
+  let keys = SUBJECT_CATEGORY_MAP.default
+  if (s.includes('urdu')) keys = SUBJECT_CATEGORY_MAP.urdu
+  else if (s.includes('english')) keys = SUBJECT_CATEGORY_MAP.english
+  return allTypes.filter(t => keys.includes(t.value))
+}
+
+function mergeQuestionTypes(parsedTypes) {
+  const parsed = Array.isArray(parsedTypes) ? parsedTypes.filter(t => t?.value) : []
+  const seen = new Set(parsed.map(t => t.value))
+  const merged = [...parsed]
+  for (const t of defaultStore.questionTypes) {
+    if (!seen.has(t.value)) merged.push(t)
+  }
+  merged.forEach(t => {
+    if (!t.labelUrdu) {
+      const def = defaultStore.questionTypes.find(d => d.value === t.value)
+      if (def?.labelUrdu) t.labelUrdu = def.labelUrdu
+    }
+  })
+  return merged
+}
 
 const defaultStore = {
   subjects: [],
@@ -31,6 +81,29 @@ const defaultStore = {
     { id: 'grammar', name: 'Grammar / Completion', icon: 'GR', defaultMarks: 5 },
     { id: 'column', name: 'Column Matching', icon: 'CM', defaultMarks: 5 },
     { id: 'summary', name: 'Summary / Central Idea', icon: 'SM', defaultMarks: 5 },
+  ],
+  questionTypes: [
+    { value: 'mcq', label: 'MCQ', labelUrdu: 'کثیر الانتخاب', marks: 1 },
+    { value: 'true_false', label: 'True / False', labelUrdu: 'درست / غلط', marks: 1 },
+    { value: 'fill', label: 'Fill in Blanks', labelUrdu: 'خالی جگہ پُر کریں', marks: 1 },
+    { value: 'columns', label: 'Match Columns', labelUrdu: 'کالم ملائیں', marks: 3 },
+    { value: 'short', label: 'Short Question', labelUrdu: 'مختصر سوالات', marks: 2 },
+    { value: 'long', label: 'Long Question', labelUrdu: 'تفصیلی سوالات', marks: 5 },
+    { value: 'definition', label: 'Definition', labelUrdu: 'تعریف', marks: 2 },
+    { value: 'numerical', label: 'Numerical', labelUrdu: 'عددی سوال', marks: 3 },
+    { value: 'diagram', label: 'Diagram / Drawing', labelUrdu: 'خاکہ', marks: 5 },
+    { value: 'wahid_jama', label: 'Wahid / Jama', labelUrdu: 'واحد جمع', marks: 3 },
+    { value: 'mutradif', label: 'Mutradif (Synonym)', labelUrdu: 'مترادف', marks: 2 },
+    { value: 'mutzad', label: 'Mutzad (Antonym)', labelUrdu: 'متضاد', marks: 2 },
+    { value: 'alfaz_maani', label: "Alfaz ke Ma'ani", labelUrdu: 'الفاظ کے معنی', marks: 2 },
+    { value: 'sentence_correction', label: 'Sentence Correction', labelUrdu: 'جملوں کی درستگی', marks: 2 },
+    { value: 'sentence_usage', label: 'Sentence Usage', labelUrdu: 'جملوں کا استعمال', marks: 3 },
+    { value: 'comprehension', label: 'Comprehension (Tafheem)', labelUrdu: 'تفہیم', marks: 10 },
+    { value: 'translation', label: 'Translation', labelUrdu: 'ترجمہ', marks: 3 },
+    { value: 'essay', label: 'Essay (Mazmoon)', labelUrdu: 'مضمون', marks: 15 },
+    { value: 'letter', label: 'Letter / Application', labelUrdu: 'خط / درخواست', marks: 10 },
+    { value: 'muhawara', label: 'Muhawara / Zarb ul Misal', labelUrdu: 'محاورے / ضرب الامثال', marks: 3 },
+    { value: 'grammar', label: 'Grammar', labelUrdu: 'قواعد', marks: 2 },
   ],
   paperSettings: {
     schoolName: '',
@@ -66,6 +139,7 @@ function loadStore() {
       savedPapers: parsed.savedPapers || [],
       publishers: parsed.publishers || defaultStore.publishers,
       questionCategories: parsed.questionCategories || defaultStore.questionCategories,
+      questionTypes: mergeQuestionTypes(parsed.questionTypes),
       paperSettings: { ...defaultStore.paperSettings, ...persistedPaperSettings },
     }
   } catch {
@@ -82,12 +156,102 @@ function estimatePrints(classLevel) {
   return counts[String(classLevel)] || 30
 }
 
+function normalizeSubjectKey({ name = '', classLevel = '', publisher = '' }) {
+  return subjectKey(name, classLevel) + (publisher ? `::${String(publisher).trim().toLowerCase()}` : '')
+}
+
+let questionBankHydrationPromise = null
+
+async function hydrateQuestionBank(update) {
+  if (!isQuestionBankAvailable()) return null
+  if (questionBankHydrationPromise) return questionBankHydrationPromise
+
+  questionBankHydrationPromise = (async () => {
+    try {
+      const serverRows = await fetchQuestionsFromServer()
+      if (!Array.isArray(serverRows)) return null
+      let mergedSnapshot = null
+      update(s => {
+        const workingSubjects = [...s.subjects]
+        const ensureSubject = ({ name, classLevel = '', publisher = '' }) => {
+          const key = subjectKey(name, classLevel)
+          let subject = workingSubjects.find(item => subjectKey(item.name, item.classLevel) === key)
+          if (!subject) {
+            subject = {
+              id: `subj_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+              name,
+              classLevel,
+              publisher,
+              cover: null,
+              createdAt: new Date().toISOString(),
+            }
+            workingSubjects.push(subject)
+          }
+          return subject
+        }
+        const merged = mergeQuestionBank(s.questions, serverRows, workingSubjects, ensureSubject)
+        mergedSnapshot = merged
+        return { ...s, subjects: merged.subjects, questions: merged.questions }
+      })
+      return mergedSnapshot
+    } catch (err) {
+      console.warn('Question bank sync skipped:', err?.message || err)
+      return null
+    } finally {
+      questionBankHydrationPromise = null
+    }
+  })()
+
+  return questionBankHydrationPromise
+}
+
+function syncQuestionToServer(question, subject, update) {
+  if (!isQuestionBankAvailable() || !question) return
+  const run = question.serverSynced
+    ? updateQuestionOnServer(question.id, question, subject)
+    : postQuestionToServer(question, subject)
+
+  run
+    .then((row) => {
+      if (!row?.id) return
+      update(s => ({
+        ...s,
+        questions: s.questions.map(q => q.id === question.id
+          ? { ...mapServerRowToLocal(row, subject?.id || q.subjectId), serverSynced: true }
+          : q),
+      }))
+    })
+    .catch((err) => console.warn('Question bank save failed:', err?.message || err))
+}
+
 export function usePaperStore() {
   const [store, setStore] = useState(defaultStore)
 
   useEffect(() => {
     // Hydrate client state from localStorage
     setStore(loadStore())
+
+    if (isPaperVaultAvailable()) {
+      fetchSavedPapersFromServer()
+        .then((serverPapers) => {
+          if (!Array.isArray(serverPapers)) return
+          setStore(prev => {
+            const merged = mergeVaultPapers(prev.savedPapers || [], serverPapers)
+            const next = { ...prev, savedPapers: merged }
+            saveStore(next)
+            return next
+          })
+        })
+        .catch((err) => console.warn('Paper vault sync skipped:', err?.message || err))
+    }
+
+    hydrateQuestionBank((updater) => {
+      setStore(prev => {
+        const next = updater(prev)
+        saveStore(next)
+        return next
+      })
+    }).catch(() => {})
 
     const handler = () => setStore(loadStore())
     window.addEventListener('storage', handler)
@@ -105,6 +269,21 @@ export function usePaperStore() {
       window.dispatchEvent(new Event(STORE_SYNC_EVENT))
       return next
     })
+  }
+
+  function findSubjectByIdentity({ name = '', classLevel = '', publisher = '' }) {
+    const targetKey = normalizeSubjectKey({ name, classLevel, publisher })
+    return store.subjects.find(sub => normalizeSubjectKey({
+      name: sub.name,
+      classLevel: sub.classLevel,
+      publisher: sub.publisher,
+    }) === targetKey) || null
+  }
+
+  function ensureSubject({ name, nameUrdu = '', publisher = '', cover = null, classLevel = '' }) {
+    const existing = findSubjectByIdentity({ name, classLevel, publisher })
+    if (existing) return existing
+    return addSubject({ name, nameUrdu, publisher, cover, classLevel })
   }
 
   function addSubject({ name, nameUrdu = '', publisher = '', cover = null, classLevel = '' }) {
@@ -143,15 +322,109 @@ export function usePaperStore() {
       createdAt: new Date().toISOString(),
     }
     update(s => ({ ...s, questions: [...s.questions, q] }))
+    const subject = store.subjects.find(s => s.id === subjectId)
+    syncQuestionToServer(q, subject, update)
     return q
   }
 
   function editQuestion(id, changes) {
-    update(s => ({ ...s, questions: s.questions.map(q => q.id === id ? { ...q, ...changes } : q) }))
+    const question = store.questions.find(q => q.id === id)
+    if (!question) return
+    const nextQuestion = { ...question, ...changes }
+    const subject = store.subjects.find(s => s.id === nextQuestion.subjectId)
+    update(s => ({ ...s, questions: s.questions.map(q => q.id === id ? { ...q, ...changes, updatedAt: new Date().toISOString() } : q) }))
+    syncQuestionToServer(nextQuestion, subject, update)
   }
 
   function deleteQuestion(id) {
+    const question = store.questions.find(q => q.id === id)
     update(s => ({ ...s, questions: s.questions.filter(q => q.id !== id) }))
+    if (question?.serverSynced && isQuestionBankAvailable()) {
+      deleteQuestionOnServer(id).catch((err) => console.warn('Question bank delete failed:', err?.message || err))
+    }
+  }
+
+  function importPaperQuestionsToBank({
+    subjectId = '',
+    subjectMeta = {},
+    selectedMCQ = [],
+    selectedShort = [],
+    selectedLong = [],
+    selectedQuestions = {},
+    medium = 'english',
+    chapter = '',
+    source = 'paper',
+    priority = 'exercise',
+  } = {}) {
+    const subject = subjectId
+      ? store.subjects.find(sub => sub.id === subjectId) || null
+      : ensureSubject(subjectMeta)
+    const resolvedSubjectId = subject?.id || subjectId || null
+    if (!resolvedSubjectId) return { total: 0, mcq: 0, short: 0, long: 0, subject: null }
+
+    const buckets = [
+      { type: 'mcq', list: selectedMCQ, defaultMarks: 1 },
+      { type: 'short', list: selectedShort, defaultMarks: 2 },
+      { type: 'long', list: selectedLong, defaultMarks: 5 },
+    ]
+    Object.entries(selectedQuestions || {}).forEach(([type, payload]) => {
+      const questions = Array.isArray(payload) ? payload : (Array.isArray(payload?.questions) ? payload.questions : [])
+      if (!questions.length) return
+      buckets.push({ type, list: questions, defaultMarks: Number(payload?.marks) || 2 })
+    })
+
+    const imported = []
+    buckets.forEach(({ type, list, defaultMarks }) => {
+      ;(list || []).forEach(item => {
+        const text = item?.text || item?.en || item?.question || ''
+        const textUrdu = item?.textUrdu || item?.ur || item?.urdu || ''
+        if (!text && !textUrdu) return
+        imported.push({
+          id: `q_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+          subjectId: resolvedSubjectId,
+          type,
+          medium: item?.medium || medium,
+          text,
+          textUrdu,
+          options: Array.isArray(item?.options) ? item.options : [],
+          answer: item?.answer || '',
+          marks: Number(item?.marks) || defaultMarks,
+          chapter: item?.chapter || chapter || '',
+          priority: item?.priority || priority,
+          source,
+          createdAt: new Date().toISOString(),
+        })
+      })
+    })
+
+    if (!imported.length) return { total: 0, mcq: 0, short: 0, long: 0, subject }
+
+    update(s => ({ ...s, questions: [...s.questions, ...imported] }))
+    if (isQuestionBankAvailable()) {
+      bulkApproveQuestionsToServer(imported, subject)
+        .then((rows) => {
+          if (!Array.isArray(rows) || !rows.length) return
+          update(s => ({
+            ...s,
+            questions: s.questions.map((q) => {
+              const index = imported.findIndex(item => item.id === q.id)
+              if (index < 0) return q
+              const row = rows[index]
+              if (!row) return q
+              return { ...mapServerRowToLocal(row, resolvedSubjectId), serverSynced: true }
+            }),
+          }))
+        })
+        .catch((err) => console.warn('Question bank bulk sync failed:', err?.message || err))
+    }
+
+    return {
+      total: imported.length,
+      mcq: imported.filter(q => q.type === 'mcq').length,
+      short: imported.filter(q => q.type === 'short').length,
+      long: imported.filter(q => q.type === 'long').length,
+      subject,
+    }
   }
 
   function bulkImportQuestions(subjectId, rawText, type = 'mcq', chapter = '', medium = 'english') {
@@ -182,6 +455,24 @@ export function usePaperStore() {
       })
     })
     update(s => ({ ...s, questions: [...s.questions, ...imported] }))
+    if (isQuestionBankAvailable()) {
+      const subject = store.subjects.find(s => s.id === subjectId)
+      bulkApproveQuestionsToServer(imported, subject || { name: '', classLevel: '' })
+        .then((rows) => {
+          if (!Array.isArray(rows) || !rows.length) return
+          update(s => ({
+            ...s,
+            questions: s.questions.map((q) => {
+              const index = imported.findIndex(item => item.id === q.id)
+              if (index < 0) return q
+              const row = rows[index]
+              if (!row) return q
+              return { ...mapServerRowToLocal(row, subjectId), serverSynced: true }
+            }),
+          }))
+        })
+        .catch((err) => console.warn('Question bank bulk sync failed:', err?.message || err))
+    }
     return imported.length
   }
 
@@ -192,18 +483,36 @@ export function usePaperStore() {
       config, selectedMCQ, selectedShort, selectedLong,
       ...rest,
       createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
     }
     update(s => ({ ...s, savedPapers: [paper, ...s.savedPapers] }))
-    void api.post('/paper-generator/saved-papers', paper).catch(() => {})
+    if (isPaperVaultAvailable()) {
+      savePaperToServer(paper)
+        .then((saved) => {
+          if (!saved?.id) return
+          update(s => ({
+            ...s,
+            savedPapers: s.savedPapers.map(p => p.id === paper.id ? { ...p, ...saved, serverSynced: true } : p),
+          }))
+          notifyAdminPaperSaved(saved).catch(() => {})
+        })
+        .catch((err) => console.warn('Paper vault save failed:', err?.message || err))
+    }
     return paper
   }
 
   function deleteSavedPaper(id) {
     update(s => ({ ...s, savedPapers: s.savedPapers.filter(p => p.id !== id) }))
+    if (isPaperVaultAvailable()) {
+      deletePaperOnServer(id).catch((err) => console.warn('Paper vault delete failed:', err?.message || err))
+    }
   }
 
   function renameSavedPaper(id, name) {
-    update(s => ({ ...s, savedPapers: s.savedPapers.map(p => p.id === id ? { ...p, name } : p) }))
+    update(s => ({ ...s, savedPapers: s.savedPapers.map(p => p.id === id ? { ...p, name, updatedAt: new Date().toISOString() } : p) }))
+    if (isPaperVaultAvailable()) {
+      renamePaperOnServer(id, name).catch((err) => console.warn('Paper vault rename failed:', err?.message || err))
+    }
   }
 
   function updatePaperSettings(changes) {
@@ -244,10 +553,16 @@ export function usePaperStore() {
 
   async function syncWithServer() {
     try {
+      await hydrateQuestionBank(update)
       window.dispatchEvent(new Event(STORE_SYNC_EVENT))
     } catch (err) {
       console.error('Failed to sync with server:', err)
     }
+  }
+
+  function getFilteredQuestionTypes(subjectName) {
+    const allTypes = store.questionTypes || defaultStore.questionTypes
+    return getFilteredTypes(subjectName, allTypes)
   }
 
   return {
@@ -256,15 +571,19 @@ export function usePaperStore() {
     savedPapers: store.savedPapers,
     publishers: store.publishers,
     questionCategories: store.questionCategories,
+    questionTypes: store.questionTypes || defaultStore.questionTypes,
     paperSettings: store.paperSettings,
     addSubject, editSubject, deleteSubject,
+    ensureSubject, findSubjectByIdentity,
     addPublisher, deletePublisher,
     updateQuestionCategories,
     addQuestion, editQuestion, deleteQuestion, bulkImportQuestions,
+    importPaperQuestionsToBank,
     savePaper, deleteSavedPaper, renameSavedPaper,
     updatePaperSettings,
     getQuestionsForPaper,
     getChaptersForSubject,
+    getFilteredQuestionTypes,
     loadSampleData,
     syncWithServer,
   }

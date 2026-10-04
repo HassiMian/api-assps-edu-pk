@@ -54,6 +54,9 @@ const ApexSceneConverge = dynamic(() => import("./ApexSceneConverge"), {
 const ApexPricingPlans = dynamic(() => import("./ApexPricingPlans"), {
   loading: () => <SectionSkeleton label="Subscription plans" />,
 });
+const PremiumTemplateShowcase = dynamic(() => import("./PremiumTemplateShowcase"), {
+  loading: () => <SectionSkeleton label="Paper Generator Studio" />,
+});
 
 function ApexCinematicFooter() {
   const links = [
@@ -128,9 +131,12 @@ export default function ApexGatewayCinematic() {
           <ApexSceneConverge />
         </ApexSceneReveal>
         <ApexSceneReveal chapter={9}>
-          <ApexPricingPlans />
+          <PremiumTemplateShowcase />
         </ApexSceneReveal>
         <ApexSceneReveal chapter={10}>
+          <ApexPricingPlans />
+        </ApexSceneReveal>
+        <ApexSceneReveal chapter={11}>
           <ApexFinalMission />
         </ApexSceneReveal>
         <ApexCinematicFooter />

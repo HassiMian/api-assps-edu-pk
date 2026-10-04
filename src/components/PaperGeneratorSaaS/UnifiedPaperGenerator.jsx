@@ -1,14 +1,36 @@
 'use client'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { usePaperStore } from './usePaperStore'
-import { extractQuestionsFromFile, generateWithGemini } from './geminiService'
+import { extractQuestionsFromFile, generateWithGemini, generateGapFillWithGemini, generateModelAnswers } from './geminiService'
 import PTSPaperGenerator from './PTSPaperGenerator'
+import PaperDocumentEditor from './editor/PaperDocumentEditor'
+import SavedPaperLibraryPanel from './SavedPaperLibraryPanel'
+import PaperAiJobsPanel from './PaperAiJobsPanel'
+import { normalizeSavedPaperForLoad, consumeQueuedSavedPaper } from './savedPaperUtils'
+import {
+  exportPaperAsDocx,
+  exportAnswerKeyAsDocx,
+  printAnswerKeyDocument,
+  generatePaperSets,
+  describePaperSetStrategy,
+  printPaperSets,
+  printMarkingSchemeDocument,
+  exportMarkingSchemeAsDocx,
+  sharePaperViaWhatsApp,
+  sharePaperAsPdf,
+  sharePaperPackage,
+  mergeAiAnswersIntoReviewItems,
+} from './paperExportUtils'
 import {
   LOWER_CLASS_TYPES,
   SCHOOL_ASSESSMENT_TYPES,
   UNIFIED_PATTERN_LIBRARY,
+  EXTENDED_PATTERN_LIBRARY,
   URDU_CATEGORY_LABELS,
   findUnifiedPattern,
+  buildNumberedQuestionPattern,
+  listPatternsForSelection,
+  getClassTier,
 } from './unifiedPatternLibrary'
 
 const C = {
@@ -23,6 +45,21 @@ const C = {
   red: '#FF375F',
   green: '#30D158',
   blue: '#0A84FF',
+}
+
+function confidencePct(value) {
+  return Math.round(Math.max(0, Math.min(Number(value || 0), 1)) * 100)
+}
+
+function confidenceColor(value) {
+  const n = Number(value || 0)
+  if (n >= 0.85) return C.green
+  if (n >= 0.7) return '#FFB84D'
+  return C.red
+}
+
+function isReviewReady(item) {
+  return item?.reviewStatus === 'Ready' || item?.reviewStatus === 'Approved'
 }
 
 const PAPER_INTENTS = ['Board Pattern Paper', 'School Assessment', 'Chapter Test', 'Monthly Test', 'Term Paper', 'Worksheet', 'Revision Paper', 'Custom Paper']
@@ -123,8 +160,201 @@ function sanitizePasteText(value = '') {
 
 function stripLeadingQuestionMarker(text = '') {
   return String(text || '')
-    .replace(/^\s*(?:q(?:uestion)?\.?\s*\d+|Ø³ÙˆØ§Ù„(?:\s*Ù†Ù…Ø¨Ø±)?\s*\d+|\d+\s*[.)-])\s*/i, '')
+    .replace(/^\s*(?:q(?:uestion)?\.?\s*\d+|سوال(?:\s*نمبر)?\s*\d+|\d+\s*[.)-])\s*/i, '')
     .trim()
+}
+
+const TOP_LEVEL_QUESTION_LINE_RE = /^\s*(\d{1,2})\s*[.)]\s+(.+)$/
+const SUBPART_LINE_RE = /^\s*((?:i{1,3}|iv|v|vi{0,3}|ix|x)|[a-d])\s*[-.)]\s+(.+)$/i
+
+function isAssessmentHeaderLine(text = '') {
+  const line = String(text || '').trim()
+  if (!line) return false
+  if (/^ass(?:essment)?\s*#?\s*\d+/i.test(line)) return true
+  if (/^total\s*marks?\s*:/i.test(line)) return true
+  if (/^\d{1,2}(?:st|nd|rd|th)\s+(english|urdu|math(?:ematics)?|science|biology|physics|chemistry|computer(?:\s*science)?|islamiyat|pakistan\s*studies)/i.test(line)) return true
+  return false
+}
+
+function extractPromptAndMarks(headerText = '') {
+  const text = String(headerText || '').trim()
+  const instructional = /answer|make|find|think|translate|write|define|explain|complete|fill|choose|solve|attempt|read|list|give|name|state|circle|match|turn|change|rewrite|use/i
+  const markPatterns = [
+    /^(.+?)[\s.:–-]+\[(\d{1,3})\]\s*$/,
+    /^(.+?)[\s.:–-]+\((\d{1,3})\s*marks?\)\s*$/i,
+    /^(.+?)[\s.:–-]+(\d{1,3})\s*marks?\s*$/i,
+    /^(.+?)[\s.:–-]+(\d{1,3})\s*$/,
+  ]
+  for (let index = 0; index < markPatterns.length; index += 1) {
+    const match = text.match(markPatterns[index])
+    if (!match) continue
+    const prompt = match[1].replace(/[.\s:–-]+$/, '').trim()
+    const strictSuffix = index === markPatterns.length - 1
+    if (!strictSuffix || instructional.test(prompt)) {
+      return { prompt, marks: Number(match[2]) }
+    }
+  }
+  return { prompt: text.replace(/[.\s]+\d{1,3}\s*marks?\s*$/i, '').replace(/[.\s]+\d{1,3}\s*$/, '').trim(), marks: null }
+}
+
+function formatPassageBlock(lines = []) {
+  const cleaned = lines.map(line => String(line || '').trim()).filter(Boolean)
+  if (!cleaned.length) return ''
+  cleaned[0] = cleaned[0].replace(/^["“'']+/, '')
+  cleaned[cleaned.length - 1] = cleaned[cleaned.length - 1].replace(/["”''],?\s*$/, '')
+
+  const englishLines = []
+  const urduLines = []
+  cleaned.forEach(line => {
+    if (isUrduText(line)) urduLines.push(line)
+    else englishLines.push(line)
+  })
+  if (englishLines.length && urduLines.length) {
+    return `${englishLines.join('\n')}\n\n${urduLines.join('\n')}`
+  }
+  return cleaned.join('\n').trim()
+}
+
+function inferTypeFromAssessmentPrompt(prompt = '') {
+  const value = String(prompt || '').toLowerCase()
+  if (/mcq|choose the correct|objective|circle the correct/.test(value)) return 'MCQ'
+  if (/translate/.test(value)) return 'Translation'
+  if (/make adjectives|adjectives|opposite meaning|antonym|synonym|suitable adjectives|grammar|fill in the blank|true\s*\/\s*false|meanings? of/.test(value)) return 'Grammar'
+  if (/essay|paragraph|story|letter|application|summary|central idea/.test(value)) return 'Long Question'
+  return 'Short Question'
+}
+
+function formatGroupedQuestionText(block = {}) {
+  const lines = []
+  const subparts = []
+  const extras = []
+  let passageLines = []
+  const flushPassage = () => {
+    if (!passageLines.length) return
+    const passage = formatPassageBlock(passageLines)
+    if (passage) extras.push(passage)
+    passageLines = []
+  }
+
+  for (const line of block.bodyLines || []) {
+    const trimmed = String(line || '').trim()
+    if (!trimmed) {
+      if (passageLines.length) passageLines.push('')
+      continue
+    }
+    const subpart = trimmed.match(SUBPART_LINE_RE)
+    if (subpart) {
+      flushPassage()
+      subparts.push({ marker: subpart[1].toLowerCase(), text: subpart[2].trim() })
+      continue
+    }
+    const looksLikePassage = passageLines.length > 0
+      || /^["“'']/.test(trimmed)
+      || /(?:poem|passage|stanza|translate|paragraph)/i.test(block.prompt || '')
+    if (looksLikePassage && !subparts.length) passageLines.push(trimmed)
+    else {
+      flushPassage()
+      extras.push(trimmed)
+    }
+  }
+  flushPassage()
+
+  subparts.forEach(part => lines.push(`(${part.marker}) ${part.text}`))
+  if (extras.length) {
+    if (lines.length) lines.push('')
+    extras.forEach(line => lines.push(line))
+  }
+  return lines.join('\n').trim()
+}
+
+function stripPromptFromQuestionBody(prompt = '', text = '') {
+  const body = String(text || '').trim()
+  const heading = String(prompt || '').trim()
+  if (!body) return ''
+  if (!heading) return body
+  const lines = body.split('\n').map(line => line.trim()).filter(Boolean)
+  const filtered = lines.filter(line => line.toLowerCase() !== heading.toLowerCase())
+  let normalized = (filtered.length ? filtered.join('\n') : body)
+  if (normalized.toLowerCase().startsWith(heading.toLowerCase())) {
+    normalized = normalized.slice(heading.length).trim().replace(/^[\s:.\-]+/, '').trim()
+  }
+  normalized = normalized.replace(/\s+(?=\([ivx]+\)\s)/gi, '\n')
+  return normalized.trim()
+}
+
+function splitNumberedQuestionBlocks(rawText = '') {
+  const lines = String(rawText || '').split('\n')
+  const blocks = []
+  let current = null
+
+  const pushCurrent = () => {
+    if (!current) return
+    blocks.push(current)
+    current = null
+  }
+
+  lines.forEach(line => {
+    const trimmed = line.trim()
+    if (!trimmed) {
+      if (current) current.bodyLines.push('')
+      return
+    }
+    if (isAssessmentHeaderLine(trimmed) || isLikelyMetadataLine(trimmed)) return
+
+    const topLevel = trimmed.match(TOP_LEVEL_QUESTION_LINE_RE)
+    if (topLevel) {
+      pushCurrent()
+      const { prompt, marks } = extractPromptAndMarks(topLevel[2])
+      current = {
+        number: Number(topLevel[1]),
+        prompt,
+        marks,
+        bodyLines: [],
+      }
+      return
+    }
+
+    if (current) current.bodyLines.push(trimmed)
+  })
+
+  pushCurrent()
+  return blocks
+}
+
+function isNumberedAssessmentPaste(rawText = '') {
+  const blocks = splitNumberedQuestionBlocks(rawText)
+  if (blocks.length >= 2) return true
+  if (blocks.length >= 1 && /ass(?:essment)?\s*#|total\s*marks?\s*:/i.test(String(rawText || ''))) return true
+  return false
+}
+
+function parseNumberedSchoolAssessment(rawText = '', config = {}) {
+  const blocks = splitNumberedQuestionBlocks(rawText)
+  if (!isNumberedAssessmentPaste(rawText) || !blocks.length) {
+    return { questions: [], totalMarks: 0, assessmentTitle: '' }
+  }
+
+  const totalMarksMatch = String(rawText || '').match(/total\s*marks?\s*:\s*(\d+)/i)
+  const assessmentMatch = String(rawText || '').match(/ass(?:essment)?\s*#?\s*(\d+)/i)
+  const totalMarks = totalMarksMatch ? Number(totalMarksMatch[1]) : blocks.reduce((sum, block) => sum + Number(block.marks || 2), 0)
+  const assessmentTitle = assessmentMatch
+    ? `Assessment ${assessmentMatch[1]}`
+    : `${config.classLevel || ''} ${config.subject || ''} Assessment`.trim()
+
+  const questions = blocks.map(block => {
+    const type = inferTypeFromAssessmentPrompt(block.prompt)
+    const category = guessCategory(block.prompt, config.subject)
+    return {
+      number: block.number,
+      prompt: block.prompt,
+      text: formatGroupedQuestionText(block),
+      type,
+      category: type === 'Grammar' ? 'Grammar' : category,
+      marks: Number(block.marks || (type === 'Translation' ? 5 : type === 'Long Question' ? 5 : type === 'MCQ' ? 1 : 2)),
+    }
+  })
+
+  return { questions, totalMarks, assessmentTitle }
 }
 
 function extractInlineMcqOptions(text = '') {
@@ -169,20 +399,23 @@ function extractInlineMcqOptions(text = '') {
 
 function detectLooseSectionType(title = '', body = '') {
   const text = `${title}\n${body}`.toLowerCase()
-  if (/mcq|mcqs|objective|multiple choice|choose the correct option|choose the correct answer|Ø¯Ø±Ø³Øª Ø¬ÙˆØ§Ø¨|Ø§Ù†ØªØ®Ø§Ø¨/.test(text)) return 'MCQ'
-  if (/true\s*false|true\/false|Ø¯Ø±Ø³Øª\s*\/\s*ØºÙ„Ø·/.test(text)) return 'True/False'
-  if (/fill(?:\s+in)?\s+the\s+blanks?|blanks?|Ø®Ø§Ù„ÛŒ Ø¬Ú¯Û/.test(text)) return 'Fill in the Blanks'
-  if (/match(?:\s+the)?\s+columns?|matching|Ù…Ù„Ø§Ø¦ÛŒÚº/.test(text)) return 'Match the Columns'
-  if (/long\s+question|long\s+questions|detailed|detail|descriptive|answer in detail|essay|ØªÙØµÛŒÙ„ÛŒ|ØªØ´Ø±ÛŒØ­ÛŒ/.test(text)) return 'Long Question'
-  if (/short\s+question|short\s+questions|very short|briefly|definition|define|what is|differentiate|answer briefly|Ù…Ø®ØªØµØ±|ÙˆØ¬ÙˆÛØ§Øª/.test(text)) return 'Short Question'
+  if (/mcq|mcqs|objective|multiple choice|choose the correct option|choose the correct answer|درست جواب|انتخاب/.test(text)) return 'MCQ'
+  if (/true\s*false|true\/false|درست\s*\/\s*غلط/.test(text)) return 'True/False'
+  if (/fill(?:\s+in)?\s+the\s+blanks?|blanks?|خالی جگہ/.test(text)) return 'Fill in the Blanks'
+  if (/match(?:\s+the)?\s+columns?|matching|ملائیں/.test(text)) return 'Match the Columns'
+  if (/long\s+question|long\s+questions|detailed|detail|descriptive|answer in detail|essay|تفصیلی|تشریحی/.test(text)) return 'Long Question'
+  if (/short\s+question|short\s+questions|very short|briefly|definition|define|what is|differentiate|answer briefly|مختصر|وجوہات/.test(text)) return 'Short Question'
   return ''
 }
 
 function splitLooseQuestions(rawText = '') {
   const raw = sanitizePasteText(rawText)
   if (!raw) return []
+  if (isNumberedAssessmentPaste(raw)) {
+    return splitNumberedQuestionBlocks(raw).map(block => `${block.number}) ${formatGroupedQuestionText(block)}`)
+  }
   const blocks = raw
-    .split(/(?=\n?\s*(?:q(?:uestion)?\.?\s*\d+|Ø³ÙˆØ§Ù„(?:\s*Ù†Ù…Ø¨Ø±)?\s*\d+|\d+\s*[.)-]))/i)
+    .split(/(?=\n?\s*(?:q(?:uestion)?\.?\s*\d+|سوال(?:\s*نمبر)?\s*\d+|\d+\s*[.)-]))/i)
     .map(text => text.trim())
     .filter(Boolean)
   if (blocks.length > 1) return blocks
@@ -195,8 +428,10 @@ function splitLooseQuestions(rawText = '') {
 function isLikelyMetadataLine(text = '') {
   const line = String(text || '').trim()
   if (!line) return true
+  if (isAssessmentHeaderLine(line)) return true
   const lower = line.toLowerCase()
   if (/^(english|urdu|math|mathematics|biology|physics|chemistry|computer(?: science)?|pak(?:istan)? studies|islamiyat)\s+\d{1,2}(?:st|nd|rd|th)?$/i.test(line)) return true
+  if (/^\d{1,2}(?:st|nd|rd|th)\s+(english|urdu|math|mathematics|biology|physics|chemistry|computer(?: science)?|science|pak(?:istan)? studies|islamiyat)$/i.test(line)) return true
   if(/^class\s*\d{1,2}(?:st|nd|rd|th)?\s+(english|urdu|math|mathematics|biology|physics|chemistry|computer(?: science)?|pak(?:istan)? studies|islamiyat)$/i.test(line)) return true
   if (/^(english|urdu|math|mathematics|biology|physics|chemistry|computer|pakistan studies|islamiyat)\s+\d{1,2}(st|nd|rd|th)?\b/.test(lower) && /total marks|time allowed|paper code/.test(lower)) return true
   if (/^(class|subject|paper code|paper marks|total marks|time allowed|exam date|roll no|student name|board|session)\b/.test(lower)) return true
@@ -232,8 +467,14 @@ function splitInlineSubparts(text = '', typeHint = '') {
 
   if (!items.length) return [raw]
 
-  const shouldKeepGrouped =
-    (!!prompt && (
+  const promptLooksInstructional = !!prompt && (
+    /answer the following|make adjectives|find words|opposite meaning|suitable adjectives|translate|write the meanings?|meanings? of|complete each|complete the sentences?|fill in the blanks?|write short note|short note|differentiate|define|what is|state whether|solve the following|attempt any|attempt the following|think of|circle the correct|match the|rewrite|change into|turn into|read the|give the|name the|list the/i.test(promptLower)
+    || /short question|long question|translation|fill in the blanks|true\/false|match the columns|grammar/i.test(typeLower)
+  )
+  const listStyleSubparts = items.every(item => item.body.split(/\s+/).length <= 8)
+  const shouldKeepGrouped = (items.length >= 2 && promptLooksInstructional)
+    || (items.length >= 2 && listStyleSubparts && prompt.length > 8)
+    || (!!prompt && (
       /answer the following questions?|answer briefly|answer in detail|attempt any|attempt the following|write the meanings?|meanings? of|translate(?: into [a-z]+)?|translation|complete each|complete the sentences?|fill in the blanks?|write short note|short note|differentiate|define|what is|state whether|solve the following/.test(promptLower)
       || /short question|long question|translation|fill in the blanks|true\/false|match the columns/.test(typeLower)
     ))
@@ -301,7 +542,8 @@ function cleanAssessmentLead(text = '') {
 
 function shouldUseAssessmentBuckets(config = {}, rawText = '') {
   const joined = `${config.intent || ''} ${config.paperType || ''} ${config.board || ''} ${rawText || ''}`.toLowerCase()
-  return /assessment|school assessment|unit test|mid term|final term|monthly test/.test(joined)
+  if (isNumberedAssessmentPaste(rawText)) return false
+  return /assessment|school assessment|unit test|mid term|final term|monthly test|ass\s*#/.test(joined)
 }
 
 function collapseToAssessmentBucket(type = '', text = '') {
@@ -316,7 +558,7 @@ function parseLooseManualPaste(rawText = '', config = {}, pattern = null) {
   if (!raw) return []
   const assessmentBucketsOnly = shouldUseAssessmentBuckets(config, raw)
 
-  const sectionHeadingRe = /^(?:part\s+[a-z]\s*:?.*|mcqs?|objective(?:\s+type)?|multiple choice questions?|short questions?|very short questions?|long questions?|detailed questions?|definitions?|fill in the blanks?|true\/false|match(?:ing)?(?: the)? columns?|choose the correct (?:option|answer)|answer briefly|answer in detail|Ø§Ù…ØªØ­Ø§Ù†ÛŒ Ø³ÙˆØ§Ù„Ø§Øª|Ù…Ù‚ØµØ¯ÛŒ|Ù…Ø®ØªØµØ± Ø³ÙˆØ§Ù„Ø§Øª|Ø·ÙˆÛŒÙ„ Ø³ÙˆØ§Ù„Ø§Øª|ØªÙØµÛŒÙ„ÛŒ Ø³ÙˆØ§Ù„Ø§Øª|ØªØ¹Ø±ÛŒÙØ§Øª|Ø®Ø§Ù„ÛŒ Ø¬Ú¯ÛÛŒÚº|Ø¯Ø±Ø³Øª\s*\/\s*ØºÙ„Ø·|Ù…Ù„Ø§Ø¦ÛŒÚº).*$/i
+  const sectionHeadingRe = /^(?:part\s+[a-z]\s*:?.*|mcqs?|objective(?:\s+type)?|multiple choice questions?|short questions?|very short questions?|long questions?|detailed questions?|definitions?|fill in the blanks?|true\/false|match(?:ing)?(?: the)? columns?|choose the correct (?:option|answer)|answer briefly|answer in detail|امتحانی سوالات|مقصدی|مختصر سوالات|طویل سوالات|تفصیلی سوالات|تعریفات|خالی جگہیں|درست\s*\/\s*غلط|ملائیں).*$/i
   const lines = raw.split('\n')
   const sections = []
   let current = { title: '', typeHint: '', lines: [] }
@@ -537,22 +779,116 @@ function inferConfigFromPaste(rawText = '', currentConfig = {}) {
   const next = { ...currentConfig }
   const subject = SUBJECTS.find(subject => new RegExp(`\\b${subject.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i').test(raw))
   const classMatch = raw.match(/\bclass\s*(\d{1,2})(?:st|nd|rd|th)?\b/i)
+  const ordinalClassMatch = raw.match(/\b(\d{1,2})(?:st|nd|rd|th)\s+(english|urdu|mathematics|math|science|biology|physics|chemistry|computer(?:\s*science)?|islamiyat|pakistan\s*studies)/i)
   const titleMatch = raw.match(/Assessment\s*:\s*([^\n]+)/i)
+  const assMatch = raw.match(/ass(?:essment)?\s*#?\s*(\d+)/i)
+  const totalMarksMatch = raw.match(/total\s*marks?\s*:\s*(\d+)/i)
+  if (/\b(1st|first)\s*year\b|\binter[\s-]?i\b|\bf\.?\s*sc\b|\bics\b|\bfa\b|\bclass\s*11\b/i.test(raw)) next.classLevel = '11'
+  if (/\b(2nd|second)\s*year\b|\binter[\s-]?ii\b|\bclass\s*12\b/i.test(raw)) next.classLevel = '12'
+  if (!next.classLevel && /\bmatric\b|\b10th\b|\bssc\b|\bclass\s*10\b/i.test(raw)) next.classLevel = '10'
+  const middleClassMatch = raw.match(/\bclass\s*([6-8])\b/i)
+  if (!next.classLevel && middleClassMatch) next.classLevel = middleClassMatch[1]
   if (subject) next.subject = subject
   if (classMatch) next.classLevel = classMatch[1]
-  if (/assessment|unit\s*\d+|part\s+a\s*:/i.test(raw)) {
+  if (ordinalClassMatch) {
+    next.classLevel = ordinalClassMatch[1]
+    const subjectName = ordinalClassMatch[2].replace(/\s+/g, ' ').trim()
+    const subjectAliases = {
+      math: 'Mathematics',
+      mathematics: 'Mathematics',
+      'computer science': 'Computer Science',
+      'pakistan studies': 'Pakistan Studies',
+    }
+    next.subject = SUBJECTS.find(item => item.toLowerCase() === subjectName.toLowerCase())
+      || subjectAliases[subjectName.toLowerCase()]
+      || subjectName.replace(/\b\w/g, char => char.toUpperCase())
+  }
+  if (/assessment|unit\s*\d+|part\s+a\s*:|ass\s*#?\s*\d+/i.test(raw)) {
     next.intent = 'School Assessment'
     next.paperType = 'Assessment'
     next.board = 'School Assessment'
   }
+  if (/board\s*pattern|annual\s*examination|bise\b|objective\s*paper|subjective\s*paper/i.test(raw)) {
+    next.intent = 'Board Pattern Paper'
+    next.paperType = 'Annual'
+    next.board = next.board || 'Punjab / Gujranwala Board'
+  }
   if (titleMatch) next.chapters = titleMatch[1].trim()
+  if (assMatch) next.chapters = `Assessment ${assMatch[1]}`
+  if (totalMarksMatch) next.totalMarks = Number(totalMarksMatch[1])
+  const subjectHint = String(next.subject || ordinalClassMatch?.[2] || '').toLowerCase()
+  if (subjectHint.includes('urdu') || subjectHint.includes('islamiyat')) next.medium = 'Urdu'
+  else if (subjectHint.includes('english')) next.medium = 'English'
+  else if (/urdu|اردو/i.test(raw) && !/english/i.test(raw)) next.medium = 'Urdu'
+  else if (/english/i.test(raw) && !/urdu/i.test(raw)) next.medium = 'English'
+  else if (/english/i.test(raw) && /urdu/i.test(raw)) next.medium = 'Dual Medium'
   return next
+}
+
+function resolveTemplatePreset(config = {}) {
+  const subject = String(config.subject || '').toLowerCase()
+  const medium = String(config.medium || '').toLowerCase()
+  if (medium === 'urdu' || subject.includes('urdu') || subject.includes('islamiyat')) return 'board'
+  if (subject.includes('english')) return 'oxford'
+  if (['mathematics', 'math', 'physics', 'chemistry', 'biology', 'science', 'computer'].some(item => subject.includes(item))) return 'cambridge'
+  if (config.paperType === 'Assessment' || config.intent === 'School Assessment') return 'institutional'
+  return 'classic'
+}
+
+function numberedRowsToReviewItems(numberedResult, inferredConfig, pattern) {
+  return numberedResult.questions.map((question, index) => {
+    const targetSection = sectionForQuestionNo(pattern, question.number)
+    return {
+      id: safeId('review'),
+      text: question.text,
+      answer: '',
+      type: question.type,
+      category: question.category,
+      marks: Number(question.marks || targetSection?.marksEach || 2),
+      options: [],
+      chapter: inferredConfig.chapters || '',
+      topic: '',
+      source: `Manual Paste Q${question.number}`,
+      confidence: 0.94,
+      reviewStatus: 'Ready',
+      duplicateHash: duplicateHash(question.text),
+      language: isUrduText(question.text) ? 'urdu' : 'english',
+      medium: inferredConfig.medium,
+      classLevel: inferredConfig.classLevel,
+      subject: inferredConfig.subject,
+      board: inferredConfig.board,
+      targetQuestionNo: Number(question.number || 0),
+      targetSectionId: targetSection?.id || `nq-${question.number}`,
+      createdAt: new Date().toISOString(),
+      order: index + 1,
+    }
+  })
 }
 
 function parseSmartPasteV2(rawText, config) {
   const raw = sanitizePasteText(rawText)
-  if (!raw) return []
+  if (!raw) return { items: [], patternOverride: null, summary: '' }
   const inferredConfig = inferConfigFromPaste(raw, config)
+  const numberedResult = parseNumberedSchoolAssessment(raw, inferredConfig)
+
+  if (numberedResult.questions.length) {
+    const patternOverride = buildNumberedQuestionPattern({
+      classLevel: inferredConfig.classLevel,
+      subject: inferredConfig.subject,
+      medium: inferredConfig.medium,
+      questions: numberedResult.questions,
+      totalMarks: numberedResult.totalMarks || inferredConfig.totalMarks,
+      assessmentTitle: numberedResult.assessmentTitle,
+    })
+    const items = numberedRowsToReviewItems(numberedResult, inferredConfig, patternOverride)
+    const marksTotal = numberedResult.totalMarks || items.reduce((sum, item) => sum + Number(item.marks || 0), 0)
+    return {
+      items,
+      patternOverride,
+      summary: `Detected ${items.length} main question(s) with grouped sub-parts · ${marksTotal} marks total · Template: ${resolveTemplatePreset(inferredConfig).replace(/-/g, ' ')}`,
+    }
+  }
+
   const pattern = findUnifiedPattern(inferredConfig)
   const assessmentRows = parseAssessmentPaste(raw, pattern)
   const looseRows = parseLooseManualPaste(raw, inferredConfig, pattern)
@@ -568,9 +904,9 @@ function parseSmartPasteV2(rawText, config) {
     .map(text => text.trim())
     .filter(Boolean)
     .map(text => ({ text, questionNo: parseQuestionNumber(text), section: null }))
-  const items = assessmentRows.length ? assessmentRows : looseRows.length ? looseRows : rows.length ? rows : fallback
+  const parsedRows = assessmentRows.length ? assessmentRows : looseRows.length ? looseRows : rows.length ? rows : fallback
 
-  return items.map((row, index) => {
+  const items = parsedRows.map((row, index) => {
     const text = row.text
     const type = row.type || inferTypeForTarget(row.section, text)
     const targetSection = row.section || sectionForQuestionNo(pattern, row.questionNo)
@@ -602,6 +938,13 @@ function parseSmartPasteV2(rawText, config) {
       order: index + 1,
     }
   })
+
+  return {
+    items,
+    patternOverride: null,
+    summary: items.length ? `Parsed ${items.length} item(s) from pasted content` : 'No questions detected',
+    inferredConfig,
+  }
 }
 
 function parseSmartPaste(rawText, config) {
@@ -730,6 +1073,7 @@ function buildSectionsFromPattern(pattern, config, bankItems = [], reviewItems =
         text: itemQuestionText(item),
         textUrdu: item?.textUrdu || item?.ur || '',
         answer: item?.answer || '',
+        markingNotes: item?.markingNotes || '',
         category: item?.category || section.allowedCategories?.[0] || section.type,
         type: item?.type || section.type,
         marks: Number(item?.marks || section.marksEach || 1),
@@ -790,8 +1134,14 @@ function missingSlots(sections) {
 }
 
 function createAiDraftsForMissing(sections, config, pattern) {
+  const existingTexts = sections
+    .flatMap(section => section.questions || [])
+    .map(q => String(q.text || '').trim())
+    .filter(Boolean)
+
   return missingSlots(sections).map(({ section, index }) => {
     const category = section.allowedCategories?.[index % Math.max(1, section.allowedCategories.length)] || section.type
+    const avoid = existingTexts.slice(0, 12).join(' | ')
     const prompt = [
       `Create one ${section.type} for Class ${config.classLevel} ${config.subject}.`,
       `Medium: ${config.medium}. Board/School: ${config.board}.`,
@@ -799,10 +1149,13 @@ function createAiDraftsForMissing(sections, config, pattern) {
       `Category: ${category}. Marks: ${section.marksEach}.`,
       config.chapters ? `Chapters: ${config.chapters}.` : '',
       config.topics ? `Topics/SLOs: ${config.topics}.` : '',
+      avoid ? `Avoid repeating: ${avoid}.` : '',
       'Teacher must review before approval.',
     ].filter(Boolean).join(' ')
+    const slotId = safeId('ai_slot')
     return {
-      id: safeId('ai_draft'),
+      id: slotId,
+      slotId,
       text: '',
       answer: '',
       type: section.type,
@@ -815,11 +1168,15 @@ function createAiDraftsForMissing(sections, config, pattern) {
       reviewStatus: 'Needs Review',
       prompt,
       duplicateHash: '',
-      language: config.medium === 'Urdu' ? 'urdu' : 'mixed',
+      language: config.medium === 'Urdu' ? 'urdu' : config.medium === 'Dual Medium' ? 'mixed' : 'english',
       medium: config.medium,
       classLevel: config.classLevel,
       subject: config.subject,
       board: config.board,
+      targetQuestionNo: Number(section.questionNo || 0),
+      targetSectionId: section.id || '',
+      sectionTitle: section.title || '',
+      slotIndex: index,
       createdAt: new Date().toISOString(),
     }
   })
@@ -838,6 +1195,48 @@ function textFromAiQuestion(question = {}, fallbackCategory = '') {
     ? '\n' + question.options.map((option, index) => `${option.label || String.fromCharCode(65 + index)}. ${option.text || option.en || option.textUrdu || option.ur || ''}`).join('\n')
     : ''
   return String(base || fallbackCategory || '').trim() + options
+}
+
+async function callUnifiedGapFillAi(config, missingDrafts, sections = []) {
+  const gapSlots = missingDrafts.map((draft, index) => ({
+    slotId: draft.slotId || draft.id || `slot_${index + 1}`,
+    targetQuestionNo: draft.targetQuestionNo,
+    targetSectionId: draft.targetSectionId,
+    sectionNo: draft.targetQuestionNo,
+    sectionTitle: draft.sectionTitle,
+    type: draft.type,
+    category: draft.category,
+    marks: draft.marks,
+    chapter: draft.chapter,
+    topic: draft.topic,
+    prompt: draft.prompt,
+  }))
+  const existingQuestions = sections
+    .flatMap(section => section.questions || [])
+    .map(q => String(q.text || '').trim())
+    .filter(Boolean)
+    .slice(0, 30)
+  const medium = config.medium === 'Dual Medium'
+    ? 'dual'
+    : String(config.medium || 'english').toLowerCase()
+
+  const response = await generateGapFillWithGemini({
+    classLevel: config.classLevel,
+    subject: config.subject,
+    medium,
+    chapters: String(config.chapters || '').split(/[,\n]+/).map(x => x.trim()).filter(Boolean),
+    gapSlots,
+    existingQuestions,
+    instructions: [
+      `Follow ${config.board || 'school'} controlled paper pattern.`,
+      `Difficulty: ${config.difficulty}.`,
+      config.topics ? `Topics/SLOs: ${config.topics}.` : '',
+      medium === 'dual' ? 'Provide English in text and Urdu in textUrdu for every question and MCQ option.' : '',
+      'Generate exactly one unique question per slotId. Match section category and marks.',
+    ].filter(Boolean).join(' '),
+  }, null)
+
+  return response?.questions || []
 }
 
 async function callUnifiedAiGenerate(config, missingDrafts) {
@@ -891,16 +1290,19 @@ function aiQuestionToReviewItem(question, draft, config) {
   return {
     ...draft,
     id: safeId('ai_review'),
+    slotId: question.slotId || draft.slotId || draft.id,
     text,
     answer: question.answer || draft.answer || '',
     type: question.type || draft.type,
     category: question.category || draft.category,
     marks: Number(question.marks || draft.marks || 1),
     source: 'AI Generated Review',
-    confidence: Number(question.confidence || 0.72),
+    confidence: Number(question.confidence || 0.86),
     reviewStatus: 'Needs Review',
     duplicateHash: duplicateHash(text),
-    language: question.language || (isUrduText(text) ? 'urdu' : config.medium === 'Urdu' ? 'urdu' : 'english'),
+    language: question.language || (isUrduText(text) ? 'urdu' : config.medium === 'Urdu' ? 'urdu' : config.medium === 'Dual Medium' ? 'mixed' : 'english'),
+    targetQuestionNo: Number(question.targetQuestionNo || draft.targetQuestionNo || 0),
+    targetSectionId: question.targetSectionId || draft.targetSectionId || '',
     createdAt: new Date().toISOString(),
   }
 }
@@ -1048,7 +1450,110 @@ function adaptUnifiedForPaperStudio(config, sections) {
   }
 }
 
-function adaptUnifiedForPTS(config, sections) {
+function isNumberedAssessmentPattern(pattern, sections = []) {
+  if (pattern?.structureMode === 'numbered') return true
+  if (!Array.isArray(sections) || sections.length < 2) return false
+  return sections.every(section => Number(section.attemptRequired || section.totalQuestions || 0) <= 1)
+    && sections.some(section => String(section.id || '').startsWith('nq-'))
+}
+
+function adaptUnifiedForPTS(config, sections, pattern = null, reviewItems = []) {
+  const activePattern = pattern || null
+  if (isNumberedAssessmentPattern(activePattern, sections)) {
+    const grouped = {}
+    const marksByType = {}
+    const numberedQuestionTypes = []
+
+    const appendNumberedQuestion = (sectionLike, question, index) => {
+      const questionNo = Number(sectionLike?.questionNo || question?.targetQuestionNo || index + 1)
+      const typeId = `nq_${questionNo}`
+      if (grouped[typeId]?.length) return
+      const prompt = sectionLike?.title || sectionLike?.prompt || `Question ${questionNo}`
+      const medium = config.medium === 'Urdu' ? 'urdu' : config.medium === 'Dual Medium' ? 'dual' : 'english'
+      const rawText = String(question?.text || question?.en || '').trim()
+      const en = stripPromptFromQuestionBody(prompt, rawText)
+      if (!en && !rawText && !prompt) return
+      const ur = question?.textUrdu || question?.ur || (isUrduText(en) ? en : '')
+      grouped[typeId] = [{
+        id: question?.id || safeId(typeId),
+        type: typeId,
+        medium,
+        en,
+        ur,
+        text: en,
+        textUrdu: ur,
+        answer: question?.answer || '',
+        markingNotes: question?.markingNotes || '',
+        priority: 'all',
+        chapterId: question?.chapter || config.chapters || '',
+        chapter: question?.chapter || config.chapters || '',
+        options: Array.isArray(question?.options) ? question.options : [],
+      }]
+      marksByType[typeId] = Number(question?.marks || sectionLike?.marksEach || sectionLike?.marks || 2)
+      numberedQuestionTypes.push({
+        value: typeId,
+        questionNo,
+        label: prompt,
+        labelUrdu: prompt,
+        marks: marksByType[typeId],
+        layout: 'block',
+      })
+    }
+
+    sections.forEach((section, index) => {
+      const question = (section.questions || []).find(item => String(item.text || item.en || '').trim())
+      if (question) appendNumberedQuestion(section, question, index)
+    })
+
+    if (!numberedQuestionTypes.length) {
+      const readyItems = (reviewItems || []).filter(item => String(item.text || '').trim() && (item.reviewStatus === 'Ready' || item.reviewStatus === 'Approved'))
+      const patternSections = activePattern?.sections || []
+      readyItems.forEach((item, index) => {
+        const sectionLike = patternSections.find(section => Number(section.questionNo) === Number(item.targetQuestionNo))
+          || patternSections[index]
+          || { questionNo: item.targetQuestionNo || index + 1, title: `Question ${item.targetQuestionNo || index + 1}`, marksEach: item.marks }
+        appendNumberedQuestion(sectionLike, item, index)
+      })
+    }
+
+    if (numberedQuestionTypes.length) {
+      numberedQuestionTypes.sort((a, b) => Number(a.questionNo || 0) - Number(b.questionNo || 0))
+      const templatePreset = resolveTemplatePreset(config)
+      return {
+        name: `${config.subject || 'Paper'} ${config.paperType || config.intent || ''}`.trim(),
+        sourceTab: 'unified',
+        structureMode: 'numbered_assessment',
+        paperSource: 'unified-paper-generator',
+        importToQuestionBank: false,
+        numberedQuestionTypes,
+        printPrefs: { tmpl: templatePreset },
+        templatePreset,
+        config: {
+          subjectName: config.subject,
+          subject: config.subject,
+          className: config.classLevel,
+          classLevel: config.classLevel,
+          paperCode: config.paperCode || String(Math.floor(1000 + Math.random() * 9000)),
+          timeAllowed: config.time || '2 hours',
+          examDate: config.examDate || new Date().toLocaleDateString('en-GB').replace(/\//g, '-'),
+          language: config.medium === 'Urdu' ? 'urdu' : config.medium === 'Dual Medium' ? 'dual' : 'english',
+          publisher: config.board || '',
+          paperType: config.paperType || config.intent || 'Paper',
+          totalMarks: Number(config.totalMarks || Object.values(marksByType).reduce((sum, mark) => sum + Number(mark || 0), 0)),
+        },
+        selectedQuestions: Object.fromEntries(Object.entries(grouped).map(([type, questions]) => [
+          type,
+          { questions, marks: marksByType[type] || 2 },
+        ])),
+        selectedMCQ: [],
+        selectedShort: [],
+        selectedLong: [],
+        ...Object.fromEntries(Object.entries(grouped).map(([type, questions]) => [type, questions])),
+        ...Object.fromEntries(Object.entries(marksByType).map(([type, marks]) => [`${type}_marks`, marks])),
+      }
+    }
+  }
+
   const grouped = {}
   const marksByType = {}
   sections.forEach(section => {
@@ -1192,16 +1697,21 @@ function PaperSheet({ config, pattern, sections, setSections }) {
 }
 
 export default function UnifiedPaperGenerator() {
-  const { subjects = [], questions = [], paperSettings = {}, importPaperQuestionsToBank } = usePaperStore()
+  const { subjects = [], questions = [], paperSettings = {}, importPaperQuestionsToBank, savedPapers = [] } = usePaperStore()
   const [active, setActive] = useState('Create Paper')
   const [manualText, setManualText] = useState('')
   const [reviewItems, setReviewItems] = useState([])
+  const [reviewFilter, setReviewFilter] = useState('all')
   const [selectedBankIds, setSelectedBankIds] = useState([])
   const [importQueue, setImportQueue] = useState([])
   const [aiStatus, setAiStatus] = useState('')
   const [extractingId, setExtractingId] = useState('')
   const [layoutEngine, setLayoutEngine] = useState('paper-studio')
+  const [proPaperOverride, setProPaperOverride] = useState(null)
   const [drafts, setDrafts] = useState(() => readDrafts())
+  const [patternOverride, setPatternOverride] = useState(null)
+  const [ptsSessionKey, setPtsSessionKey] = useState(0)
+  const [reopenedSavedPaper, setReopenedSavedPaper] = useState(null)
   const [config, setConfig] = useState({
     intent:'Board Pattern Paper',
     classLevel:'9',
@@ -1217,10 +1727,16 @@ export default function UnifiedPaperGenerator() {
     source:'Mixed Source',
     answerKey:true,
     markingScheme:true,
-    sets:1,
+    sets:3,
   })
 
-  const pattern = useMemo(() => findUnifiedPattern(config), [config.classLevel, config.subject, config.medium])
+  const pattern = useMemo(() => patternOverride || findUnifiedPattern(config), [config, patternOverride])
+  const visiblePatterns = useMemo(
+    () => listPatternsForSelection(config),
+    [config.classLevel, config.subject, config.medium],
+  )
+  const classTier = useMemo(() => getClassTier(config.classLevel), [config.classLevel])
+  const patternKey = `${config.classLevel}|${config.subject}|${config.medium}|${config.intent}`
   const bankItems = useMemo(() => {
     const ids = new Set(selectedBankIds)
     return questions.filter(q => ids.has(q.id)).map(q => ({
@@ -1244,7 +1760,14 @@ export default function UnifiedPaperGenerator() {
   const [sections, setSections] = useState(() => buildSectionsFromPattern(findUnifiedPattern({ classLevel:'9', subject:'Biology', medium:'English' }), config))
   const warnings = useMemo(() => validatePaper(config, pattern, sections, reviewItems), [config, pattern, sections, reviewItems])
   const paperStudioPreview = useMemo(() => adaptUnifiedForPaperStudio(config, sections), [config, sections])
-  const ptsLoadedPaper = useMemo(() => adaptUnifiedForPTS(config, sections), [config, sections])
+  const ptsLoadedPaper = useMemo(
+    () => adaptUnifiedForPTS(config, sections, patternOverride || pattern, reviewItems),
+    [config, sections, pattern, patternOverride, reviewItems],
+  )
+  const effectivePtsPaper = useMemo(
+    () => (proPaperOverride ? { ...ptsLoadedPaper, ...proPaperOverride } : ptsLoadedPaper),
+    [ptsLoadedPaper, proPaperOverride],
+  )
   const questionBankMatches = useMemo(() => questions.filter(q => {
     const subject = String(q.subject || q.subjectName || '').toLowerCase()
     const classLevel = String(q.classLevel || q.class_level || '')
@@ -1252,6 +1775,42 @@ export default function UnifiedPaperGenerator() {
   }).slice(0, 80), [questions, config.subject, config.classLevel])
 
   const approvedReviewItems = (items = reviewItems) => items.filter(i => i.reviewStatus === 'Ready' || i.reviewStatus === 'Approved')
+
+  const reviewStats = useMemo(() => {
+    const withText = reviewItems.filter(item => String(item.text || '').trim())
+    return {
+      total: withText.length,
+      ready: withText.filter(isReviewReady).length,
+      needsReview: withText.filter(item => !isReviewReady(item)).length,
+      lowConfidence: withText.filter(item => Number(item.confidence || 0) > 0 && Number(item.confidence || 0) < 0.7).length,
+      highConfidencePending: withText.filter(item => !isReviewReady(item) && Number(item.confidence || 0) >= 0.85).length,
+    }
+  }, [reviewItems])
+
+  const filteredReviewItems = useMemo(() => {
+    const items = reviewItems.filter(item => {
+      const confidence = Number(item.confidence ?? 0)
+      if (reviewFilter === 'ready') return isReviewReady(item)
+      if (reviewFilter === 'needs_review') return !isReviewReady(item)
+      if (reviewFilter === 'low') return confidence > 0 && confidence < 0.7
+      return true
+    })
+    return [...items].sort((a, b) => Number(a.confidence ?? 0) - Number(b.confidence ?? 0))
+  }, [reviewItems, reviewFilter])
+
+  useEffect(() => {
+    if (patternOverride) return
+    const activePattern = findUnifiedPattern(config)
+    const computedMarks = Number(activePattern.objectiveMarks || 0) + Number(activePattern.subjectiveMarks || 0)
+    setConfig(prev => ({
+      ...prev,
+      board: prev.intent === 'Board Pattern Paper' ? (activePattern.board || prev.board) : prev.board,
+      totalMarks: computedMarks || prev.totalMarks,
+      time: activePattern.subjectiveTime || prev.time,
+    }))
+    setSections(buildSectionsFromPattern(activePattern, config, bankItems, approvedReviewItems(reviewItems)))
+  }, [patternKey, patternOverride])
+
   const rebuild = (items = reviewItems, nextActive = null) => {
     setSections(buildSectionsFromPattern(pattern, config, bankItems, approvedReviewItems(items)))
     if (nextActive) setActive(nextActive)
@@ -1259,19 +1818,35 @@ export default function UnifiedPaperGenerator() {
   const updateConfig = (key, value) => setConfig(prev => ({ ...prev, [key]: value }))
   const parsePaste = () => {
     const inferred = inferConfigFromPaste(manualText, config)
-    setConfig(prev => ({ ...prev, ...inferred }))
-    const parsed = parseSmartPasteV2(manualText, inferred)
-    setReviewItems(prev => [...parsed, ...prev])
+    const mergedConfig = { ...config, ...inferred }
+    const { items: parsed, patternOverride: nextPattern, summary } = parseSmartPasteV2(manualText, mergedConfig)
+    setConfig(mergedConfig)
+    if (nextPattern) setPatternOverride(nextPattern)
+    setReviewItems(prev => [...parsed, ...prev.filter(item => !String(item.source || '').startsWith('Manual Paste'))])
+    setAiStatus(summary || `Sent ${parsed.length} item(s) to review.`)
     setActive('Import Review Queue')
   }
   const pasteAndBuildPaper = () => {
     const inferred = inferConfigFromPaste(manualText, config)
-    setConfig(prev => ({ ...prev, ...inferred }))
-    const parsed = parseSmartPasteV2(manualText, inferred).map(item => ({ ...item, reviewStatus:'Ready', confidence:Math.max(Number(item.confidence || 0), 0.78) }))
-    const nextItems = [...parsed, ...reviewItems]
+    const mergedConfig = { ...config, ...inferred }
+    const { items: parsed, patternOverride: nextPattern, summary } = parseSmartPasteV2(manualText, mergedConfig)
+    if (!parsed.length) {
+      setAiStatus('No questions detected. Check the paste format and try again.')
+      return
+    }
+    setConfig(mergedConfig)
+    setPatternOverride(nextPattern)
+    const nextItems = parsed.map(item => ({
+      ...item,
+      reviewStatus: Number(item.confidence || 0) >= 0.85 ? 'Ready' : 'Needs Review',
+    }))
     setReviewItems(nextItems)
-    const nextPattern = findUnifiedPattern(inferred)
-    setSections(buildSectionsFromPattern(nextPattern, inferred, bankItems, approvedReviewItems(nextItems)))
+    const activePattern = nextPattern || findUnifiedPattern(mergedConfig)
+    setSections(buildSectionsFromPattern(activePattern, mergedConfig, bankItems, approvedReviewItems(nextItems)))
+    setPtsSessionKey(key => key + 1)
+    setProPaperOverride(null)
+    setLayoutEngine('paper-studio-pro')
+    setAiStatus(summary || `Built paper with ${nextItems.length} question(s).`)
     setActive('Paper Preview')
   }
   const approveAllAndBuildPaper = () => {
@@ -1279,6 +1854,15 @@ export default function UnifiedPaperGenerator() {
     setReviewItems(nextItems)
     setSections(buildSectionsFromPattern(pattern, config, bankItems, approvedReviewItems(nextItems)))
     setActive('Paper Preview')
+  }
+  const approveHighConfidence = () => {
+    const nextItems = reviewItems.map(item => (
+      item.text && Number(item.confidence || 0) >= 0.85
+        ? { ...item, reviewStatus: 'Ready' }
+        : item
+    ))
+    setReviewItems(nextItems)
+    setAiStatus(`Approved ${nextItems.filter(item => item.text && isReviewReady(item)).length} high-confidence item(s).`)
   }
   const saveApprovedToBank = () => {
     const selectedQuestions = {}
@@ -1315,13 +1899,18 @@ export default function UnifiedPaperGenerator() {
     }
     setAiStatus(`Generating ${drafts.length} missing question(s) with AI...`)
     try {
-      const generated = await callUnifiedAiGenerate(config, drafts)
+      const generated = await callUnifiedGapFillAi(config, drafts, sections)
+      const draftBySlot = Object.fromEntries(drafts.map(draft => [draft.slotId || draft.id, draft]))
       const items = generated
-        .map((question, index) => aiQuestionToReviewItem(question, drafts[index % drafts.length], config))
+        .map((question, index) => {
+          const draft = draftBySlot[question.slotId] || drafts[index] || drafts[0]
+          return aiQuestionToReviewItem(question, draft, config)
+        })
         .filter(item => item.text)
       if (items.length) {
         setReviewItems(prev => [...items, ...prev])
-        setAiStatus(`Generated ${items.length} question(s). Review and approve before adding to the paper.`)
+        setSections(buildSectionsFromPattern(pattern, config, bankItems, approvedReviewItems([...items, ...reviewItems])))
+        setAiStatus(`Generated ${items.length} slot-matched question(s). Review and approve before export.`)
       } else {
         setReviewItems(prev => [...drafts, ...prev])
         setAiStatus('AI returned no structured questions. Draft requests were created for manual completion.')
@@ -1333,15 +1922,29 @@ export default function UnifiedPaperGenerator() {
     setActive('Import Review Queue')
   }
   const segmentImportText = (item) => {
-    const parsed = parseSmartPasteV2(item.rawText || item.text || '', config)
-      .map(row => ({ ...row, source: `Imported Review: ${item.name || 'Upload'}` }))
-    setReviewItems(prev => [...parsed, ...prev])
-    setImportQueue(prev => prev.map(row => row.id === item.id ? { ...row, status:'Segmented for teacher review', confidence:0.55 } : row))
+    const mergedConfig = { ...config }
+    const { items: parsed, patternOverride: nextPattern, summary } = parseSmartPasteV2(item.rawText || item.text || '', mergedConfig)
+    if (nextPattern) setPatternOverride(nextPattern)
+    setReviewItems(prev => [
+      ...parsed.map(row => ({ ...row, source: `Imported Review: ${item.name || 'Upload'}` })),
+      ...prev.filter(row => !String(row.source || '').startsWith('Manual Paste')),
+    ])
+    setImportQueue(prev => prev.map(row => row.id === item.id ? { ...row, status:'Segmented for teacher review', confidence:0.85 } : row))
+    if (summary) setAiStatus(summary)
   }
   const saveDraft = () => {
-    const draft = { id:safeId('draft'), config, sections, reviewItems, layoutEngine, savedAt:new Date().toISOString() }
+    const draft = {
+      id: safeId('draft'),
+      config,
+      sections,
+      reviewItems,
+      layoutEngine,
+      patternOverride,
+      savedAt: new Date().toISOString(),
+    }
     writeDraft(draft)
     setDrafts(readDrafts())
+    setAiStatus('Draft snapshot saved on this device.')
   }
   const exportPrint = () => {
     if (layoutEngine === 'paper-studio') {
@@ -1357,8 +1960,190 @@ export default function UnifiedPaperGenerator() {
     win.focus()
   }
 
+  const buildExportPayload = () => {
+    const base = reopenedSavedPaper || effectivePtsPaper || {}
+    return {
+      ...base,
+      name: base.name || `${config.subject} Class ${config.classLevel}`,
+      config: {
+        ...(base.config || {}),
+        subjectName: config.subject,
+        subject: config.subject,
+        className: config.classLevel,
+        classLevel: config.classLevel,
+        paperCode: base.config?.paperCode || config.paperCode || String(Math.floor(1000 + Math.random() * 9000)),
+        timeAllowed: config.time || base.config?.timeAllowed || '2 hours',
+        examDate: config.examDate || base.config?.examDate || new Date().toLocaleDateString('en-GB').replace(/\//g, '-'),
+        language: config.medium === 'Urdu' ? 'urdu' : config.medium === 'Dual Medium' ? 'dual' : 'english',
+        totalMarks: config.totalMarks || base.config?.totalMarks,
+        chapters: config.chapters || base.config?.chapters,
+      },
+      paperSource: base.paperSource || 'unified-paper-generator',
+      sourceTab: base.sourceTab || 'unified',
+      structureMode: base.structureMode || 'numbered_assessment',
+    }
+  }
+
+  const exportDocx = () => {
+    exportPaperAsDocx(buildExportPayload(), paperSettings, `${config.subject}_Class${config.classLevel}`)
+    setAiStatus('DOCX downloaded — open in Microsoft Word.')
+  }
+
+  const exportAnswerKey = () => {
+    const payload = buildExportPayload()
+    const types = payload.numberedQuestionTypes || []
+    if (config.answerKey === false) {
+      setAiStatus('Answer key export is disabled in paper settings.')
+      return
+    }
+    printAnswerKeyDocument(payload, types, paperSettings, payload.config)
+    setAiStatus('Answer key sent to printer.')
+  }
+
+  const exportAnswerKeyDocx = () => {
+    const payload = buildExportPayload()
+    const types = payload.numberedQuestionTypes || []
+    exportAnswerKeyAsDocx(payload, types, paperSettings, payload.config)
+    setAiStatus('Answer key DOCX downloaded.')
+  }
+
+  const exportPaperSets = () => {
+    const setCount = Math.max(1, Math.min(Number(config.sets) || 3, 5))
+    const sets = generatePaperSets(buildExportPayload(), setCount)
+    printPaperSets(sets, paperSettings)
+    setAiStatus(`Generated ${sets.length} paper set(s) — unique codes, shuffled MCQ options, and shuffled short/long order.`)
+  }
+
+  const exportMarkingScheme = () => {
+    if (config.markingScheme === false) {
+      setAiStatus('Marking scheme export is disabled in paper settings.')
+      return
+    }
+    const payload = buildExportPayload()
+    printMarkingSchemeDocument(payload, payload.numberedQuestionTypes || [], paperSettings, payload.config)
+    setAiStatus('Marking scheme sent to printer.')
+  }
+
+  const exportMarkingSchemeDocx = () => {
+    const payload = buildExportPayload()
+    exportMarkingSchemeAsDocx(payload, payload.numberedQuestionTypes || [], paperSettings, payload.config)
+    setAiStatus('Marking scheme DOCX downloaded.')
+  }
+
+  const shareWhatsapp = () => {
+    sharePaperViaWhatsApp(buildExportPayload(), paperSettings)
+    setAiStatus('WhatsApp share opened — attach the downloaded DOCX if needed.')
+  }
+
+  const sharePdf = () => {
+    sharePaperAsPdf(buildExportPayload(), paperSettings)
+    setAiStatus('PDF export opened — choose Save as PDF in the print dialog.')
+  }
+
+  const shareFullPackage = async () => {
+    const payload = buildExportPayload()
+    const result = await sharePaperPackage(payload, paperSettings, payload.numberedQuestionTypes || [])
+    setAiStatus(result.mode === 'native' ? 'Paper shared via device share sheet.' : 'DOCX + Answer Key downloaded. WhatsApp message opened.')
+  }
+
+  const fillModelAnswersWithAI = async () => {
+    const payload = buildExportPayload()
+    const types = payload.numberedQuestionTypes || pattern?.sections?.map(section => ({
+      questionNo: section.questionNo,
+      label: section.title,
+      marks: section.marksEach,
+    })) || []
+    const questionRows = types.map(type => {
+      const review = reviewItems.find(item => Number(item.targetQuestionNo) === Number(type.questionNo))
+        || reviewItems.find(item => String(item.source || '').includes(`Q${type.questionNo}`))
+      const section = sections.find(s => Number(s.questionNo) === Number(type.questionNo))
+      const sectionQ = section?.questions?.[0]
+      return {
+        id: review?.id || sectionQ?.id || `nq_${type.questionNo}`,
+        questionNo: type.questionNo,
+        prompt: type.label || section?.title || '',
+        text: review?.text || sectionQ?.text || '',
+        marks: type.marks || section?.marksEach || 2,
+        type: sectionQ?.type || 'Short Question',
+        answer: review?.answer || sectionQ?.answer || '',
+      }
+    }).filter(row => String(row.text || row.prompt || '').trim())
+
+    const pending = questionRows.filter(row => !String(row.answer || '').trim())
+    if (!pending.length) {
+      setAiStatus('All questions already have model answers.')
+      return
+    }
+
+    setAiStatus(`Generating model answers for ${pending.length} question(s) with AI...`)
+    try {
+      const { answers } = await generateModelAnswers(config, pending)
+      if (!answers.length) {
+        setAiStatus('AI did not return model answers. Try again or add answers manually.')
+        return
+      }
+      const nextReview = mergeAiAnswersIntoReviewItems(reviewItems, answers)
+      setReviewItems(nextReview)
+      setSections(buildSectionsFromPattern(patternOverride || pattern, config, bankItems, approvedReviewItems(nextReview)))
+      setPtsSessionKey(key => key + 1)
+      setAiStatus(`AI filled ${answers.length} model answer(s). Export Answer Key or Marking Scheme now.`)
+    } catch (error) {
+      setAiStatus(`AI answer fill failed: ${error?.response?.data?.message || error?.message || 'Unknown error'}`)
+    }
+  }
+
+  const handleReopenSavedPaper = (paper) => {
+    const normalized = normalizeSavedPaperForLoad(paper)
+    setReopenedSavedPaper(normalized)
+    setLayoutEngine('paper-studio')
+    setPtsSessionKey(key => key + 1)
+    setActive('Paper Preview')
+    setAiStatus(`Reopened "${normalized.name}" from saved library.`)
+  }
+
+  useEffect(() => {
+    const queued = consumeQueuedSavedPaper(savedPapers)
+    if (!queued) return
+    const normalized = normalizeSavedPaperForLoad(queued)
+    setReopenedSavedPaper(normalized)
+    setLayoutEngine('paper-studio')
+    setPtsSessionKey(key => key + 1)
+    setActive('Paper Preview')
+    setAiStatus(`Reopened "${normalized.name}" from saved library.`)
+  }, [savedPapers])
+
+  if (active === 'Paper Preview' && layoutEngine === 'paper-studio-pro') {
+    return (
+      <PaperDocumentEditor
+        key={ptsSessionKey}
+        loadedPaper={reopenedSavedPaper || effectivePtsPaper}
+        paperSettings={paperSettings}
+        language={config.medium === 'Urdu' ? 'urdu' : config.medium === 'Dual Medium' ? 'dual' : 'english'}
+        onPaperChange={setProPaperOverride}
+        onOpenPrintPreview={(paper) => {
+          setProPaperOverride(paper)
+          setLayoutEngine('paper-studio')
+          setPtsSessionKey(key => key + 1)
+        }}
+        onReturnToSource={() => {
+          setReopenedSavedPaper(null)
+          setActive('Create Paper')
+        }}
+      />
+    )
+  }
+
   if (active === 'Paper Preview' && layoutEngine === 'paper-studio') {
-    return <PTSPaperGenerator loadedPaper={ptsLoadedPaper} onReturnToSource={() => setActive('Create Paper')} />
+    return (
+      <PTSPaperGenerator
+        key={ptsSessionKey}
+        loadedPaper={reopenedSavedPaper || effectivePtsPaper}
+        onReturnToSource={() => {
+          setReopenedSavedPaper(null)
+          setActive('Create Paper')
+        }}
+      />
+    )
   }
   const addImportFiles = async (files) => {
     const rows = await Promise.all(Array.from(files || []).map(async (file) => {
@@ -1410,7 +2195,7 @@ export default function UnifiedPaperGenerator() {
     }
   }
 
-  const tabs = ['Create Paper', 'Board Pattern Builder', 'School Assessment Builder', 'Smart Manual Paste', 'Question Bank Selector', 'Import Review Queue', 'Pattern Library', 'Paper Preview', 'Export Center', 'Paper History']
+  const tabs = ['Create Paper', 'Board Pattern Builder', 'School Assessment Builder', 'Smart Manual Paste', 'Question Bank Selector', 'Import Review Queue', 'Pattern Library', 'Paper Preview', 'Export Center', 'Saved Library']
   const lowerClassMode = Number(config.classLevel) <= 5
 
   return (
@@ -1424,6 +2209,7 @@ export default function UnifiedPaperGenerator() {
         <div style={{ display:'flex', gap:10, flexWrap:'wrap' }}>
           <Btn onClick={saveDraft}>Save Draft</Btn>
           <Btn variant="gold" onClick={() => { rebuild(); setActive('Paper Preview') }}>Preview Paper</Btn>
+          <Btn onClick={fillModelAnswersWithAI}>AI Model Answers</Btn>
           <Btn onClick={generateMissingQuestions}>Generate Missing Questions</Btn>
           <Btn onClick={() => setActive('Export Center')}>Export Center</Btn>
         </div>
@@ -1437,13 +2223,16 @@ export default function UnifiedPaperGenerator() {
         <aside style={{ background:C.panel, border:`1px solid ${C.border}`, borderRadius:16, padding:18, alignSelf:'start', position:'sticky', top:12 }}>
           <h2 style={{ margin:'0 0 14px', color:C.gold, fontSize:18 }}>Paper Controls</h2>
             <div style={{ display:'grid', gap:12 }}>
-            <Field label="Preview Layout Engine"><Select value={layoutEngine} onChange={setLayoutEngine}><option value="paper-studio">Paper Studio Templates</option><option value="unified">Unified Editable Sheet</option></Select></Field>
+            <Field label="Preview Layout Engine"><Select value={layoutEngine} onChange={setLayoutEngine}><option value="paper-studio">Paper Studio (Print Templates)</option><option value="paper-studio-pro">Paper Studio Pro (Word Editor)</option><option value="unified">Unified Editable Sheet</option></Select></Field>
             <Field label="What do you want to create?"><Select value={config.intent} onChange={v => updateConfig('intent', v)}>{PAPER_INTENTS.map(x => <option key={x}>{x}</option>)}</Select></Field>
             <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10 }}>
               <Field label="Class"><Select value={config.classLevel} onChange={v => updateConfig('classLevel', v)}>{CLASSES.map(x => <option key={x}>{x}</option>)}</Select></Field>
               <Field label="Medium"><Select value={config.medium} onChange={v => updateConfig('medium', v)}>{MEDIUMS.map(x => <option key={x}>{x}</option>)}</Select></Field>
             </div>
             <Field label="Subject"><Select value={config.subject} onChange={v => updateConfig('subject', v)}>{[...new Set([...SUBJECTS, ...subjects.map(s => s.name).filter(Boolean)])].map(x => <option key={x}>{x}</option>)}</Select></Field>
+            <div style={{ fontSize:11, color:C.muted, letterSpacing:'0.06em', textTransform:'uppercase' }}>
+              Pattern tier: <strong style={{ color:C.gold }}>{classTier}</strong> · {visiblePatterns.length} match(es)
+            </div>
             <Field label="Board / School"><Input value={config.board} onChange={e => updateConfig('board', e.target.value)} /></Field>
             <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10 }}>
               <Field label="Total Marks"><Input type="number" value={config.totalMarks} onChange={e => updateConfig('totalMarks', Number(e.target.value))} /></Field>
@@ -1456,6 +2245,12 @@ export default function UnifiedPaperGenerator() {
               <label style={{ color:C.muted, fontSize:12 }}><input type="checkbox" checked={config.answerKey} onChange={e => updateConfig('answerKey', e.target.checked)} /> Answer key</label>
               <label style={{ color:C.muted, fontSize:12 }}><input type="checkbox" checked={config.markingScheme} onChange={e => updateConfig('markingScheme', e.target.checked)} /> Marking scheme</label>
             </div>
+            {!paperSettings?.logo && (
+              <div style={{ padding:'10px 12px', borderRadius:12, border:`1px solid rgba(200,153,26,0.35)`, background:'rgba(200,153,26,0.08)', fontSize:12, color:C.silver, lineHeight:1.5 }}>
+                <strong style={{ color:C.gold }}>School logo missing.</strong> Paper templates will use a default mark until you upload your logo in Question Bank settings.
+                <div style={{ marginTop:8 }}><a href="/teacher/question-bank" style={{ color:C.gold, fontWeight:800, textDecoration:'none' }}>Open Question Bank → Upload Logo</a></div>
+              </div>
+            )}
           </div>
         </aside>
 
@@ -1513,7 +2308,7 @@ export default function UnifiedPaperGenerator() {
               <div style={{ marginBottom:12, padding:12, borderRadius:12, background:'rgba(212,175,55,0.08)', border:`1px solid ${C.border}` }}>
                 <div style={{ color:C.gold, fontWeight:800, marginBottom:6 }}>Recommended English Format</div>
                 <div style={{ color:C.muted, fontSize:13, lineHeight:1.7 }}>
-                  Example: <strong>Assessment: Unit 03 - Chemical Bonding</strong>, then <strong>Class 9 Chemistry</strong>, followed by <strong>Part A: MCQs</strong>, <strong>Part B: Short Questions</strong>, and <strong>Part C: Long Questions</strong>. The parser also accepts plain pasted content even if it is not perfectly formatted.
+                  Example: <strong>Ass # 5</strong>, <strong>6th English</strong>, <strong>Total Marks: 25</strong>, then numbered questions like <strong>1) Answer the following question. 06</strong> with sub-parts <strong>i- ii- iii-</strong>. The parser keeps each numbered question as one item and groups all sub-parts inside it.
                 </div>
               </div>
               <textarea value={manualText} onChange={e => setManualText(e.target.value)} placeholder="Paste full paper, questions, Urdu/English mixed text, MCQs, grammar, translations, math questions..." style={{ width:'100%', minHeight:260, background:'rgba(7,22,40,0.88)', color:C.silver, border:`1px solid ${C.border}`, borderRadius:14, padding:14, resize:'vertical', boxSizing:'border-box' }} />
@@ -1571,14 +2366,38 @@ export default function UnifiedPaperGenerator() {
                 ))}
               </div>
               {aiStatus && <div style={{ marginBottom:12, color:C.gold, fontWeight:800 }}>{aiStatus}</div>}
+              <div style={{ display:'flex', flexWrap:'wrap', gap:8, marginBottom:14 }}>
+                {[
+                  ['Total', reviewStats.total, C.gold],
+                  ['Ready', reviewStats.ready, C.green],
+                  ['Needs review', reviewStats.needsReview, C.red],
+                  ['Low confidence', reviewStats.lowConfidence, '#FFB84D'],
+                ].map(([label, value, color]) => (
+                  <span key={label} style={{ display:'inline-flex', alignItems:'center', gap:8, padding:'7px 12px', borderRadius:999, background:'rgba(255,255,255,0.04)', border:`1px solid ${C.border}`, color:C.silver, fontSize:12, fontWeight:700 }}>
+                    <span style={{ width:8, height:8, borderRadius:'50%', background:color }} />
+                    {label}: {value}
+                  </span>
+                ))}
+              </div>
+              <div style={{ display:'flex', gap:8, marginBottom:14, flexWrap:'wrap' }}>
+                {[
+                  ['all', 'All'],
+                  ['ready', 'Ready'],
+                  ['needs_review', 'Needs Review'],
+                  ['low', 'Low Confidence'],
+                ].map(([id, label]) => (
+                  <Btn key={id} onClick={() => setReviewFilter(id)} style={{ opacity: reviewFilter === id ? 1 : 0.72, borderColor: reviewFilter === id ? 'rgba(200,153,26,0.55)' : C.border }}>{label}</Btn>
+                ))}
+              </div>
               <div style={{ display:'flex', gap:10, marginBottom:14, flexWrap:'wrap' }}>
                 <Btn variant="gold" onClick={approveAllAndBuildPaper} disabled={!reviewItems.some(item => item.text)}>Approve All & Build Paper</Btn>
+                <Btn onClick={approveHighConfidence} disabled={!reviewStats.highConfidencePending}>Approve Ready (≥85%)</Btn>
                 <Btn onClick={saveApprovedToBank} disabled={!approvedReviewItems().length}>Save Approved to Question Bank</Btn>
                 <Btn onClick={() => rebuild(reviewItems, 'Paper Preview')}>Rebuild Preview</Btn>
               </div>
               <input type="file" multiple accept=".pdf,image/*,.txt,.md,.csv" onChange={e => addImportFiles(e.target.files)} style={{ marginBottom:14 }} />
               <div style={{ display:'grid', gap:10 }}>
-                {[...importQueue, ...reviewItems].map(item => (
+                {importQueue.map(item => (
                   <div key={item.id} style={{ display:'grid', gap:8, background:'rgba(7,22,40,0.72)', border:`1px solid ${C.border}`, borderRadius:12, padding:12 }}>
                     <div style={{ display:'flex', justifyContent:'space-between', gap:10 }}><strong>{item.name || item.type}</strong><span style={{ color:item.reviewStatus === 'Needs Review' ? C.red : C.green }}>{item.reviewStatus || item.status}</span></div>
                     {item.prompt && <div style={{ color:C.gold, fontSize:12, lineHeight:1.6 }}>AI draft prompt: {item.prompt}</div>}
@@ -1597,6 +2416,25 @@ export default function UnifiedPaperGenerator() {
                         </div>
                       </>
                     )}
+                  </div>
+                ))}
+                {filteredReviewItems.map(item => (
+                  <div key={item.id} style={{ display:'grid', gap:8, background:'rgba(7,22,40,0.72)', border:`1px solid ${isReviewReady(item) ? 'rgba(48,209,88,0.28)' : (Number(item.confidence || 0) < 0.7 ? 'rgba(255,55,95,0.28)' : C.border)}`, borderRadius:12, padding:12 }}>
+                    <div style={{ display:'flex', justifyContent:'space-between', gap:10, flexWrap:'wrap' }}>
+                      <strong>{item.source || item.type || 'Review item'}</strong>
+                      <span style={{ color:isReviewReady(item) ? C.green : C.red, fontWeight:700 }}>{item.reviewStatus || 'Needs Review'}</span>
+                    </div>
+                    {Number(item.confidence) > 0 && (
+                      <div style={{ display:'grid', gap:4 }}>
+                        <div style={{ display:'flex', justifyContent:'space-between', fontSize:11, color:C.muted }}>
+                          <span>AI confidence</span>
+                          <span style={{ color:confidenceColor(item.confidence), fontWeight:800 }}>{confidencePct(item.confidence)}%</span>
+                        </div>
+                        <div style={{ height:6, borderRadius:999, background:'rgba(255,255,255,0.08)', overflow:'hidden' }}>
+                          <div style={{ width:`${confidencePct(item.confidence)}%`, height:'100%', background:confidenceColor(item.confidence), transition:'width 0.25s ease-out' }} />
+                        </div>
+                      </div>
+                    )}
                     {item.text && <textarea value={item.text} onChange={e => setReviewItems(prev => prev.map(x => x.id === item.id ? { ...x, text:e.target.value } : x))} style={{ width:'100%', minHeight:70, background:'rgba(15,23,42,0.9)', color:C.silver, border:`1px solid ${C.border}`, borderRadius:10, padding:10 }} />}
                     {item.text && <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 100px auto', gap:8 }}><Input value={item.category} onChange={e => setReviewItems(prev => prev.map(x => x.id === item.id ? { ...x, category:e.target.value } : x))} /><Input value={item.type} onChange={e => setReviewItems(prev => prev.map(x => x.id === item.id ? { ...x, type:e.target.value } : x))} /><Input type="number" value={item.marks} onChange={e => setReviewItems(prev => prev.map(x => x.id === item.id ? { ...x, marks:Number(e.target.value) } : x))} /><Btn onClick={() => setReviewItems(prev => prev.map(x => x.id === item.id ? { ...x, reviewStatus:'Ready' } : x))}>Approve</Btn></div>}
                     {!item.text && item.source === 'AI Draft Request' && (
@@ -1611,6 +2449,10 @@ export default function UnifiedPaperGenerator() {
                   </div>
                 ))}
                 {!importQueue.length && !reviewItems.length && <div style={{ color:C.muted }}>No imported or pasted content yet.</div>}
+                {!filteredReviewItems.length && reviewItems.length > 0 && <div style={{ color:C.muted }}>No review items match this filter.</div>}
+              </div>
+              <div style={{ marginTop:18 }}>
+                <PaperAiJobsPanel title="AI Import & Scan Jobs" />
               </div>
             </section>
           )}
@@ -1618,7 +2460,23 @@ export default function UnifiedPaperGenerator() {
           {active === 'Pattern Library' && (
             <section style={{ background:C.panel2, border:`1px solid ${C.border}`, borderRadius:16, padding:20 }}>
               <h2 style={{ marginTop:0, color:C.gold }}>Pattern Library</h2>
-              <div style={{ display:'grid', gap:12 }}>{UNIFIED_PATTERN_LIBRARY.map(p => <details key={p.id} style={{ background:'rgba(7,22,40,0.72)', border:`1px solid ${C.border}`, borderRadius:12, padding:12 }}><summary style={{ cursor:'pointer', fontWeight:900 }}>{p.name}</summary><pre style={{ whiteSpace:'pre-wrap', color:C.muted, fontSize:12 }}>{JSON.stringify(p, null, 2)}</pre></details>)}</div>
+              <p style={{ color:C.muted, marginTop:0 }}>Class {config.classLevel} · {config.subject} · {config.medium} — {visiblePatterns.length} pattern(s)</p>
+              <div style={{ display:'grid', gap:12 }}>
+                {(visiblePatterns.length ? visiblePatterns : EXTENDED_PATTERN_LIBRARY.slice(0, 12)).map(p => (
+                  <details key={p.id} open={p.id === pattern.id} style={{ background:'rgba(7,22,40,0.72)', border:`1px solid ${p.id === pattern.id ? 'rgba(200,153,26,0.55)' : C.border}`, borderRadius:12, padding:12 }}>
+                    <summary style={{ cursor:'pointer', fontWeight:900 }}>
+                      {p.name} <span style={{ color:C.muted, fontWeight:600 }}>· Class {p.classLevel} · {Number(p.objectiveMarks || 0) + Number(p.subjectiveMarks || 0)} marks</span>
+                    </summary>
+                    <div style={{ display:'grid', gap:8, marginTop:10 }}>
+                      {p.sections.map(section => (
+                        <div key={section.id} style={{ fontSize:12, color:C.silver, padding:'8px 10px', borderRadius:8, background:'rgba(15,23,42,0.45)' }}>
+                          <strong>Q{section.questionNo}</strong> {section.title} — {section.attemptRequired}/{section.totalQuestions} · {section.marks} marks
+                        </div>
+                      ))}
+                    </div>
+                  </details>
+                ))}
+              </div>
             </section>
           )}
 
@@ -1626,7 +2484,7 @@ export default function UnifiedPaperGenerator() {
             <section style={{ display:'grid', gap:14 }}>
               <div style={{ background:C.panel2, border:`1px solid ${C.border}`, borderRadius:16, padding:16 }}>
                 <h2 style={{ margin:'0 0 8px', color:C.gold }}>Paper Preview</h2>
-                <p style={{ margin:0, color:C.muted }}>{layoutEngine === 'paper-studio' ? 'Using existing Paper Studio layout templates through a safe adapter. The old Paper Preview source is not modified.' : 'This is a separate Unified preview/editor. It does not modify the old Paper Preview editor.'}</p>
+                <p style={{ margin:0, color:C.muted }}>{layoutEngine === 'paper-studio-pro' ? 'Word-class TipTap editor with undo, formatting ribbon, and mobile zoom.' : layoutEngine === 'paper-studio' ? 'Using existing Paper Studio layout templates through a safe adapter.' : 'Separate Unified preview/editor sheet.'}</p>
               </div>
               {layoutEngine === 'paper-studio' ? (
                 <div style={{ color:C.muted }}>Loading Paper Studio editor...</div>
@@ -1639,15 +2497,87 @@ export default function UnifiedPaperGenerator() {
           {active === 'Export Center' && (
             <section style={{ background:C.panel2, border:`1px solid ${C.border}`, borderRadius:16, padding:20 }}>
               <h2 style={{ marginTop:0, color:C.gold }}>Export Center</h2>
+              <p style={{ margin:'0 0 14px', color:C.muted, fontSize:13, lineHeight:1.6 }}>
+                Export, share, and teacher resources: print, Word, answer keys, marking scheme, WhatsApp/PDF share, and parallel sets.
+              </p>
               <div style={{ display:'grid', gap:8, marginBottom:14 }}>{warnings.map((w, i) => <div key={i} style={{ padding:10, borderRadius:10, background:w.includes('passed') ? 'rgba(48,209,88,0.12)' : 'rgba(255,159,10,0.12)', color:w.includes('passed') ? C.green : '#fbbf24' }}>{w}</div>)}</div>
-              <div style={{ display:'flex', gap:10, flexWrap:'wrap' }}><Btn onClick={() => rebuild()}>Validate Paper</Btn><Btn variant="gold" onClick={exportPrint}>Export PDF / Print</Btn><Btn onClick={() => alert('DOCX export will use a separate adapter when enabled. Current safe export is print/PDF.')}>Export DOCX</Btn></div>
+              <div style={{ display:'flex', gap:10, flexWrap:'wrap' }}>
+                <Btn onClick={() => rebuild()}>Validate Paper</Btn>
+                <Btn variant="gold" onClick={fillModelAnswersWithAI}>AI Model Answers</Btn>
+                <Btn variant="gold" onClick={() => { setLayoutEngine('paper-studio'); setActive('Paper Preview') }}>Open Print Preview</Btn>
+                <Btn onClick={() => { setLayoutEngine('paper-studio-pro'); setActive('Paper Preview') }}>Open Pro Editor</Btn>
+                <Btn onClick={exportPrint}>Quick Print</Btn>
+                <Btn onClick={exportDocx}>Export DOCX</Btn>
+                <Btn onClick={exportAnswerKey}>Print Answer Key</Btn>
+                <Btn onClick={exportAnswerKeyDocx}>Answer Key DOCX</Btn>
+                <Btn onClick={exportMarkingScheme}>Marking Scheme</Btn>
+                <Btn onClick={exportMarkingSchemeDocx}>Scheme DOCX</Btn>
+                <div style={{ display:'flex', alignItems:'center', gap:8, padding:'0 4px' }}>
+                  <span style={{ fontSize:12, color:C.muted, fontWeight:600 }}>Sets</span>
+                  <select
+                    value={String(config.sets || 3)}
+                    onChange={e => setConfig(prev => ({ ...prev, sets: Number(e.target.value) }))}
+                    style={{ background:'rgba(15,23,42,0.9)', color:C.silver, border:`1px solid ${C.border}`, borderRadius:8, padding:'8px 10px', fontSize:12 }}
+                  >
+                    {[1, 2, 3, 4, 5].map(n => <option key={n} value={n}>{n}</option>)}
+                  </select>
+                  <Btn onClick={exportPaperSets}>Print Sets</Btn>
+                </div>
+                <Btn onClick={sharePdf}>Share PDF</Btn>
+                <Btn onClick={shareWhatsapp}>WhatsApp</Btn>
+                <Btn onClick={shareFullPackage}>Share Package</Btn>
+              </div>
+              <p style={{ margin:'10px 0 0', color:C.muted, fontSize:12, lineHeight:1.6 }}>{describePaperSetStrategy()}</p>
+              <div style={{ marginTop:14, display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(180px,1fr))', gap:10 }}>
+                {[
+                  ['AI Answers', 'Auto-fill teacher model answers'],
+                  ['Answer Key', 'Confidential teacher copy'],
+                  ['Marking Scheme', 'Marks split + rubric notes'],
+                  ['Share Package', 'DOCX + WhatsApp / native share'],
+                  ['Sets A–E', 'Unique codes + shuffled MCQ/short/long'],
+                ].map(([title, text]) => (
+                  <div key={title} style={{ padding:12, borderRadius:12, background:'rgba(7,22,40,0.72)', border:`1px solid ${C.border}` }}>
+                    <div style={{ color:C.gold, fontWeight:800, marginBottom:4 }}>{title}</div>
+                    <div style={{ color:C.muted, fontSize:12, lineHeight:1.5 }}>{text}</div>
+                  </div>
+                ))}
+              </div>
             </section>
           )}
 
-          {active === 'Paper History' && (
-            <section style={{ background:C.panel2, border:`1px solid ${C.border}`, borderRadius:16, padding:20 }}>
-              <h2 style={{ marginTop:0, color:C.gold }}>Paper History</h2>
-              <div style={{ display:'grid', gap:10 }}>{drafts.map(d => <button key={d.id} onClick={() => { setConfig(d.config); setSections(d.sections); setReviewItems(d.reviewItems || []); setLayoutEngine(d.layoutEngine || 'paper-studio'); setActive('Paper Preview') }} style={{ textAlign:'left', padding:12, borderRadius:12, border:`1px solid ${C.border}`, background:'rgba(7,22,40,0.72)', color:C.silver, cursor:'pointer' }}>{d.config.subject} Class {d.config.classLevel} - {new Date(d.savedAt).toLocaleString()}</button>)}{!drafts.length && <div style={{ color:C.muted }}>No unified drafts saved yet.</div>}</div>
+          {active === 'Saved Library' && (
+            <section style={{ display:'grid', gap:16 }}>
+              <SavedPaperLibraryPanel
+                onLoadPaper={handleReopenSavedPaper}
+                sourceFilter="unified"
+                title="Saved Paper Library"
+                subtitle="Reopen unified assessments or bulk print multiple saved papers."
+              />
+              <div style={{ background:C.panel2, border:`1px solid ${C.border}`, borderRadius:16, padding:20 }}>
+                <h2 style={{ marginTop:0, color:C.gold }}>Local Draft Snapshots</h2>
+                <p style={{ margin:'0 0 12px', color:C.muted, fontSize:13 }}>Quick restore points saved on this device before final Save Paper.</p>
+                <div style={{ display:'grid', gap:10 }}>
+                  {drafts.map(d => (
+                    <button
+                      key={d.id}
+                      onClick={() => {
+                        setPatternOverride(d.patternOverride || null)
+                        setConfig(d.config)
+                        setSections(d.sections)
+                        setReviewItems(d.reviewItems || [])
+                        setReopenedSavedPaper(null)
+                        setLayoutEngine(d.layoutEngine || 'paper-studio')
+                        setPtsSessionKey(key => key + 1)
+                        setActive('Paper Preview')
+                      }}
+                      style={{ textAlign:'left', padding:12, borderRadius:12, border:`1px solid ${C.border}`, background:'rgba(7,22,40,0.72)', color:C.silver, cursor:'pointer' }}
+                    >
+                      {d.config.subject} Class {d.config.classLevel} — {new Date(d.savedAt).toLocaleString()}
+                    </button>
+                  ))}
+                  {!drafts.length && <div style={{ color:C.muted }}>No local draft snapshots yet. Use Save Draft while building a paper.</div>}
+                </div>
+              </div>
             </section>
           )}
         </main>

@@ -3,13 +3,13 @@
 import DashboardLayout from '@/components/DashboardLayout';
 import { motion } from 'framer-motion';
 import { BookOpen, Send, CheckCircle2, FileText, BrainCircuit } from 'lucide-react';
-import { useState } from 'react';
+import { useState, type FormEvent } from 'react';
 
 export default function TeacherAcademics() {
   const [activeTab, setActiveTab] = useState<'homework' | 'diary' | 'quiz'>('homework');
   const [showNotification, setShowNotification] = useState(false);
 
-  const handleAssign = (e: React.FormEvent) => {
+  const handleAssign = (e: FormEvent) => {
     e.preventDefault();
     setShowNotification(true);
     setTimeout(() => setShowNotification(false), 3000);
