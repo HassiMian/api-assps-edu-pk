@@ -156,11 +156,9 @@ article {
     overflow-y: auto;
   }
 
-  main table,
-  .overflow-x-auto table,
-  .table-container table {
-    min-width: 640px;
-  }
+  .overflow-x-auto > table,
+  .responsive-table-wrap > table,
+  .table-container > table { min-width: 640px; }
 
   .overflow-x-auto {
     border-radius: 1rem;
@@ -195,11 +193,8 @@ article {
   }
 
 
-  .flex-row,
-  .md\:flex-row,
-  .lg\:flex-row {
-    flex-direction: column !important;
-  }
+  /* No global flex-direction override: nested rows (actions, counters, toolbars)
+     must keep their own responsive contract on narrow devices. */
 
   .fixed.top-6.right-6,
   .fixed.right-6,
@@ -215,9 +210,8 @@ article {
     width: calc(100vw - 1.5rem) !important;
   }
 
-  .overflow-x-auto table {
-    width: max-content !important;
-    min-width: 640px !important;
+  .overflow-x-auto > table {
+    min-width: 640px;
   }
 
   form {
@@ -276,9 +270,11 @@ article {
     -webkit-overflow-scrolling: touch !important;
   }
 
-  table {
-    width: 100% !important;
-    min-width: 650px !important;
+  /* Keep normal small tables intrinsic; overflow wrappers own wide data grids. */
+  .overflow-x-auto > table,
+  .responsive-table-wrap > table,
+  .table-container > table {
+    min-width: 650px;
   }
 
   td, th {
@@ -321,10 +317,7 @@ article {
 
 @media (max-width: 768px) {
 
-  .flex-row,
-  .md\:flex-row {
-    flex-direction: column !important;
-  }
+  /* Responsive modules use explicit grid/stack classes, not global .flex-row. */
 
   .paper-generator-tabs {
     padding: 10px 12px !important;
@@ -503,3 +496,53 @@ article {
 .cw-shell .cw-modal-panel button:focus-visible{outline:3px solid var(--cw-focus);outline-offset:3px}
 .cw-shell .cw-modal-panel .text-red-400{color:#963d39!important}.cw-shell .cw-modal-panel .text-emerald-400{color:#246b46!important}
 @media(max-width:680px){.cw-shell .cw-module-heading{padding:20px 17px}.cw-shell .cw-module-heading-actions{width:100%}.cw-shell .cw-module-heading-actions>*{flex:1}.cw-shell .cw-modal-panel{padding:19px}.cw-shell .cw-data-table th,.cw-shell .cw-data-table td{padding:12px 13px}}
+
+/* APEX CONNECT V3.6 — touch, iOS/Safari safe-area and Android viewport contract.
+   Scoped to the four role workspaces; login and print rules stay independent. */
+.cw-shell {width:100%;max-width:100%;min-width:0;isolation:isolate;}
+.cw-shell .tws-workspace,.cw-shell .tws-main,.cw-shell .tws-main-inner {min-width:0;max-width:100%;}
+.cw-shell .tws-main {scrollbar-gutter:stable;overscroll-behavior-y:contain;-webkit-overflow-scrolling:touch;}
+.cw-shell :is(button,a,input,textarea,select,[role="button"]) {touch-action:manipulation;}
+.cw-shell :is(button,a,[role="button"]):focus-visible {outline:3px solid var(--cw-focus);outline-offset:3px;}
+.cw-shell :is(.cw-module-primary,.cw-module-secondary,.tws-nav-link,.tws-signout,.tws-menu-button,.tws-header-notices) {min-height:44px;}
+.cw-shell .cw-module-heading-inner,.cw-shell .cw-module-heading-actions,.cw-shell .cw-module-subheading {min-width:0;}
+.cw-shell .cw-modal-backdrop {padding: max(12px,env(safe-area-inset-top)) max(12px,env(safe-area-inset-right)) max(12px,env(safe-area-inset-bottom)) max(12px,env(safe-area-inset-left));}
+.cw-shell .cw-modal-panel {width:min(100%,760px);max-height:calc(100dvh - max(24px,env(safe-area-inset-top)) - max(24px,env(safe-area-inset-bottom)));overscroll-behavior:contain;-webkit-overflow-scrolling:touch;}
+.cw-shell .cw-data-table {width:100%;}
+.cw-shell :is(.responsive-table-wrap,.overflow-x-auto,.table-container):has(> .cw-data-table) {overflow-x:auto;max-width:100%;-webkit-overflow-scrolling:touch;overscroll-behavior-x:contain;}
+@media(max-width:1023px) {
+  .cw-shell {min-height:100svh;}
+  .cw-shell .tws-sidebar {height:100svh;max-height:100dvh;padding-top:max(16px,env(safe-area-inset-top));padding-bottom:max(14px,env(safe-area-inset-bottom));overflow-y:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch;}
+  .cw-shell .tws-sidebar-open {transform:translate3d(0,0,0);}
+  .cw-shell .tws-drawer-scrim {inset:0;z-index:30;touch-action:none;}
+  .cw-shell .tws-workspace {min-height:100svh;}
+  .cw-shell .tws-topbar {padding-inline:max(12px,env(safe-area-inset-left)) max(12px,env(safe-area-inset-right));height:64px;min-height:64px;}
+  .cw-shell .tws-menu-button {display:flex;width:44px;min-width:44px;height:44px;flex:0 0 44px;}
+  .cw-shell .tws-breadcrumb {min-width:0;max-width:calc(100vw - 120px);overflow:hidden;white-space:nowrap;text-overflow:ellipsis;}
+  .cw-shell .tws-breadcrumb strong {overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .cw-shell .tws-main {padding:0!important;width:100%;overflow-x:hidden;}
+  .cw-shell .tws-main-inner {padding:18px max(12px,env(safe-area-inset-right)) calc(28px + env(safe-area-inset-bottom)) max(12px,env(safe-area-inset-left));}
+  .cw-shell .cw-modal-backdrop {align-items:center!important;overflow:auto;}
+  .cw-shell .cw-modal-panel {margin:0!important;max-width:100%;border-radius:17px;}
+  .cw-shell :is(input:not([type="checkbox"]):not([type="radio"]),textarea,select) {font-size:16px!important;}
+  .cw-shell :is(.cw-field,.cw-module-primary,.cw-module-secondary) {min-height:44px;}
+  .cw-shell .cw-module-heading-actions > * {min-height:44px;}
+  .cw-shell .cw-data-table {min-width:650px;}
+  .cw-shell .cw-data-table td,.cw-shell .cw-data-table th {word-break:normal!important;overflow-wrap:anywhere;}
+}
+@media(max-width:430px){
+  .cw-shell .tws-topbar {gap:6px;}
+  .cw-shell .tws-breadcrumb {font-size:11px;gap:5px;}
+  .cw-shell .tws-topbar-right {gap:6px;}
+  .cw-shell .tws-main-inner {padding-top:15px;}
+  .cw-shell .cw-module-heading {padding:19px 16px;}
+  .cw-shell .cw-module-heading-actions {display:grid;grid-template-columns:minmax(0,1fr);width:100%;}
+  .cw-shell .cw-module-heading-actions > * {width:100%;}
+}
+@supports not (height:100dvh){.cw-shell .cw-modal-panel {max-height:calc(100vh - 32px);}}
+@media(prefers-reduced-motion:reduce){
+  .cw-shell .tws-sidebar,.cw-shell .tws-nav-link,.cw-shell .tws-main * {scroll-behavior:auto!important;transition-duration:.01ms!important;animation-duration:.01ms!important;}
+}
+@media print{.cw-shell .tws-sidebar,.cw-shell .tws-topbar,.cw-shell .tws-drawer-scrim{display:none!important}.cw-shell .tws-workspace,.cw-shell .tws-main,.cw-shell .tws-main-inner{overflow:visible!important;max-height:none!important;max-width:100%!important;padding:0!important;box-shadow:none!important}}
+/* Bilingual notices: preserve readable Urdu glyph joining and RTL flow on mobile. */
+.cw-shell :is([lang="ur"],[dir="rtl"]){direction:rtl;text-align:start;word-break:normal;overflow-wrap:break-word;hyphens:none;line-height:1.9;}

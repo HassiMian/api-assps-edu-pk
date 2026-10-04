@@ -76,6 +76,8 @@ export default function ConnectWorkspaceShell({ children, title, role }:{childre
   useEffect(()=>{const update=()=>setMobile(window.innerWidth<1024);update();window.addEventListener('resize',update);return()=>window.removeEventListener('resize',update)},[]);
   const effectiveCompact=compact&&!mobile;
   const contentRef=useRef<HTMLElement|null>(null);
+  const menuRef=useRef<HTMLButtonElement|null>(null);
+  const sidebarRef=useRef<HTMLElement|null>(null);
   const links=navigation[role];
   const copy=roleCopy[role];
   useEffect(()=>setDrawer(false),[pathname]);
@@ -88,7 +90,28 @@ export default function ConnectWorkspaceShell({ children, title, role }:{childre
     return()=>window.sessionStorage.setItem(storageKey,String(target.scrollTop));
   },[pathname,role]);
 
-  useEffect(()=>{if(!drawer)return;const close=(e:KeyboardEvent)=>{if(e.key==='Escape')setDrawer(false)};window.addEventListener('keydown',close);return()=>window.removeEventListener('keydown',close)},[drawer]);
+  useEffect(()=>{
+    if (!drawer || !mobile) return;
+    const oldPosition=document.body.style.position;
+    const oldTop=document.body.style.top;
+    const oldWidth=document.body.style.width;
+    const scroll=window.scrollY;
+    document.body.style.position='fixed';document.body.style.top=`-${scroll}px`;document.body.style.width='100%';
+    const first=sidebarRef.current?.querySelector<HTMLElement>('a[href]');
+    first?.focus({preventScroll:true});
+    const onKey=(event:KeyboardEvent)=>{
+      if(event.key==='Escape') {event.preventDefault();setDrawer(false);menuRef.current?.focus({preventScroll:true});}
+      if(event.key==='Tab'){
+        const nodes=Array.from(sidebarRef.current?.querySelectorAll<HTMLElement>('a[href],button:not([disabled])')||[]).filter(x=>x.getClientRects().length);
+        if(!nodes.length)return;
+        const firstNode=nodes[0],lastNode=nodes[nodes.length-1];
+        if(event.shiftKey&&document.activeElement===firstNode){event.preventDefault();lastNode.focus();}
+        else if(!event.shiftKey&&document.activeElement===lastNode){event.preventDefault();firstNode.focus();}
+      }
+    };
+    document.addEventListener('keydown',onKey);
+    return()=>{document.removeEventListener('keydown',onKey);document.body.style.position=oldPosition;document.body.style.top=oldTop;document.body.style.width=oldWidth;window.scrollTo(0,scroll)};
+  },[drawer,mobile]);
   const goLogout=()=>{logout();router.replace(`/login?next=%2F${role}&logout=1`)};
   if(!user)return null;
   const nav=(<>
@@ -97,11 +120,11 @@ export default function ConnectWorkspaceShell({ children, title, role }:{childre
     <nav className="tws-links" aria-label={`${copy.name} portal navigation`}>
       {links.map(({label,href,icon:Icon})=>{
         const active=pathname===href||(href!==`/${role}`&&pathname.startsWith(`${href}/`)&&!links.some(other=>other.href!==href&&other.href.startsWith(`${href}/`)&&pathname.startsWith(other.href)));
-        return <Link key={href} href={href} title={effectiveCompact?label:undefined} aria-current={active?'page':undefined} onClick={()=>setDrawer(false)} className={`tws-nav-link ${active?'tws-nav-active':''}`}><Icon size={19} strokeWidth={1.9}/>{!effectiveCompact&&<span>{label}</span>}{active&&!effectiveCompact&&<span className="tws-nav-dot"/>}</Link>;
+        return <Link key={href} href={href} prefetch={false} title={effectiveCompact?label:undefined} aria-current={active?'page':undefined} onClick={()=>setDrawer(false)} className={`tws-nav-link ${active?'tws-nav-active':''}`}><Icon size={19} strokeWidth={1.9}/>{!effectiveCompact&&<span>{label}</span>}{active&&!effectiveCompact&&<span className="tws-nav-dot"/>}</Link>;
       })}
     </nav>
     <div className="tws-sidebar-bottom">
-      {!effectiveCompact&&<div className="tws-side-note"><span className="tws-note-glyph"><Sparkles size={17}/></span><strong>{copy.note}</strong><small>{copy.description}</small><Link href={copy.href}>{copy.action} <ArrowUpRight size={13}/></Link></div>}
+      {!effectiveCompact&&<div className="tws-side-note"><span className="tws-note-glyph"><Sparkles size={17}/></span><strong>{copy.note}</strong><small>{copy.description}</small><Link href={copy.href} prefetch={false}>{copy.action} <ArrowUpRight size={13}/></Link></div>}
       <div className="tws-profile"><span className="tws-avatar">{String(user.name||role[0]).charAt(0).toUpperCase()}</span>{!effectiveCompact&&<div><strong>{user.name||`${copy.name} account`}</strong><small>{copy.name} workspace</small></div>}</div>
       <button type="button" className="tws-signout" onClick={goLogout}><LogOut size={17}/>{!effectiveCompact&&'Sign out'}</button>
       <button type="button" className="tws-compact-toggle" onClick={()=>setCompact(v=>!v)} aria-label={effectiveCompact?'Expand sidebar':'Collapse sidebar'}>{effectiveCompact?<PanelLeftOpen size={17}/>:<PanelLeftClose size={17}/>}</button>
@@ -109,10 +132,10 @@ export default function ConnectWorkspaceShell({ children, title, role }:{childre
   </>);
   return <div className={`tws-shell cw-shell cw-role-${role}`}>
     {drawer&&<button className="tws-drawer-scrim" type="button" aria-label="Close navigation" onClick={()=>setDrawer(false)}/>}
-    <aside className={`tws-sidebar ${effectiveCompact?'tws-sidebar-compact':''} ${drawer?'tws-sidebar-open':''}`}>{nav}</aside>
+    <aside ref={sidebarRef} id={`${role}-navigation`} inert={mobile&&!drawer} aria-label={`${copy.name} navigation`} className={`tws-sidebar ${effectiveCompact?'tws-sidebar-compact':''} ${drawer?'tws-sidebar-open':''}`}>{nav}</aside>
     <div className="tws-workspace">
-      <header className="tws-topbar"><div className="tws-topbar-left"><button type="button" className="tws-menu-button" onClick={()=>setDrawer(v=>!v)} aria-label="Toggle navigation" aria-expanded={drawer}>{drawer?<X size={20}/>:<Menu size={20}/>}</button><div className="tws-breadcrumb">{copy.breadcrumb} <ChevronRight size={14}/> <strong>{title}</strong></div></div>
-        <div className="tws-topbar-right"><span className="tws-school-pill"><span className="tws-live-dot"/> {schoolName}</span><Link className="tws-header-notices" href={`/${role}`} aria-label={`Go to ${copy.name} overview`} title="Return to overview"><LayoutDashboard size={18}/></Link><span className="tws-top-avatar" aria-hidden="true">{String(user.name||role[0]).charAt(0).toUpperCase()}</span></div></header>
+      <header className="tws-topbar"><div className="tws-topbar-left"><button ref={menuRef} type="button" className="tws-menu-button" onClick={()=>setDrawer(v=>!v)} aria-controls={`${role}-navigation`} aria-label={drawer?'Close navigation':'Open navigation'} aria-expanded={drawer}>{drawer?<X size={20}/>:<Menu size={20}/>}</button><div className="tws-breadcrumb">{copy.breadcrumb} <ChevronRight size={14}/> <strong>{title}</strong></div></div>
+        <div className="tws-topbar-right"><span className="tws-school-pill"><span className="tws-live-dot"/> {schoolName}</span><Link className="tws-header-notices" href={`/${role}`} prefetch={false} aria-label={`Go to ${copy.name} overview`} title="Return to overview"><LayoutDashboard size={18}/></Link><span className="tws-top-avatar" aria-hidden="true">{String(user.name||role[0]).charAt(0).toUpperCase()}</span></div></header>
       <main ref={contentRef} className="tws-main" id={`${role}-main`}><div className="tws-main-inner">{children}</div></main>
     </div>
   </div>;
