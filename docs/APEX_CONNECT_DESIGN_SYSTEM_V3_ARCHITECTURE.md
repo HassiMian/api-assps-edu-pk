@@ -67,3 +67,27 @@ Priority inner screens for component-level follow-through: Admin Users, Students
 - Synthetic authenticated smoke on Admin, Teacher, Student and Parent landing pages: all HTTP 200. Cross-role access attempts redirected (307). Sixteen additional authenticated child-page routes returned HTTP 200; user records created exclusively within ephemeral test tenant and cleaned up.
 - Backend/public health HTTP 200 following zero-downtime blue/green promotion; previous green build preserved on VPS in `.next-candidate-before-v3-20261004`.
 - No school data or portal role permissions were modified as part of the design release.
+
+## V3.1 continuation refinement (2026-10-04)
+
+These changes close problems discovered in the original shell review without changing tenant permissions, API payloads, school data, or the school SaaS:
+
+- Mobile drawer computes `effectiveCompact = compact && !mobile` to prevent hidden labels if the teacher/admin previously collapsed the sidebar on desktop then resized. Compact toggle is hidden on mobile.
+- Replaced the topbar bell glyph, which incorrectly linked to Overview rather than opening actual notifications, with a truthful overview icon and title. Do not reinstate a fake notification affordance; wire a role-scoped inbox API and unread state first.
+- Refined role-scoped legacy module colours: white-background cards use sufficiently dark blue/green/violet/amber/red foreground variants; nested slate-700/800/900 containers are surfaced in pale mineral rather than navy. Gradient action foregrounds remain white. Applied exclusively under `.cw-shell .tws-main .glass-card`.
+- Responsive link hit areas target 44 px for mobile sidebar. Do not override print styles.
+- Mandatory gates: 22/22 token contrast script; source-route inventory; isolated Next/TypeScript production build; synthetic four-role login and 16 inner routes; cross-role denial; health; source checkpoint and rollback. These prove source/runtime regression status, **not** manual visual acceptance of every child view.
+
+### Prioritized module-by-module visual acceptance backlog
+
+| Wave | Screens | Acceptance scope |
+|---|---|---|
+| P1 | Admin Users, Students, Teachers, Finance | 320px+ overflow; readable tabular data; modal focus/close; warning/error contrast; one-time credential display must be intentionally prominent and no-store |
+| P1 | Teacher Classes, Attendance, Assessments | Class-assignment empty state; real-only figures; readable selectors, disabled states and rubric tables; Urdu/RTL content where applicable |
+| P2 | Parent Finance, Reports | Family/tenant isolation; status and currency hierarchy; accessible notices; never fake complaint submission |
+| P2 | Student Exams, Quiz, Homework | Age-appropriate approachable visual density; keyboard flow; timer and submitted-state clarity; no invented ranks or streaks |
+| P3 | Remaining Admin operations + responsive modals | Shared field/control primitives, consistent drawers, responsive data tables and role-specific icons |
+
+### Human verification still required
+
+Compare 375/768/1024/1440px browser screenshots including dark-to-light form islands, select menus, overlays, empty/error/loaded states, keyboard navigation and mobile drawer after desktop-collapse. Accessibility checkers cannot inspect all dynamic contrast interactions from source text alone. Do not claim that 39 inner routes have been manually pixel-audited until this is done.

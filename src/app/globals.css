@@ -451,3 +451,15 @@ article {
 .cw-shell .tws-brand-copy span{font-size:10px;font-weight:750;letter-spacing:.12em}
 .cw-shell .tws-brand-copy small{font-size:10px;font-weight:850;letter-spacing:.12em}
 .cw-shell .tws-profile small{font-size:11px}
+/* V3.1 scoped polish: high-density legacy module text and mobile navigation. */
+.cw-shell .tws-main .glass-card :is(.text-blue-500,.text-cyan-500){color:#285A84!important}
+.cw-shell .tws-main .glass-card :is(.text-emerald-500,.text-green-500){color:#236748!important}
+.cw-shell .tws-main .glass-card :is(.text-violet-500,.text-purple-500){color:#654B90!important}
+.cw-shell .tws-main .glass-card :is(.text-amber-500,.text-yellow-500){color:#82511E!important}
+.cw-shell .tws-main .glass-card :is(.text-red-500,.text-rose-500){color:#913A39!important}
+.cw-shell .tws-main .glass-card :is(.bg-slate-700,.bg-slate-800,.bg-slate-900){background:#F4F6F2!important;color:var(--cw-ink)!important}
+.cw-shell .tws-main .glass-card :is(table,th,td){border-color:#E0E7DE}
+.cw-shell .tws-main .glass-card :is(input,textarea,select):focus-visible{background:#fff!important;outline:3px solid var(--cw-focus);outline-offset:2px}
+.cw-shell .tws-main .glass-card :is(button,a)[class*='bg-gradient-'],.cw-shell .tws-main .glass-card :is(button,a)[class*='bg-gradient-'] :is(span,svg){color:#fff!important}
+@media(max-width:1023px){.cw-shell .tws-sidebar .tws-compact-toggle{display:none!important}.cw-shell .tws-sidebar-open .tws-nav-link{min-height:44px}}
+@media(min-width:1024px){.cw-shell .tws-nav-link{min-height:42px}}

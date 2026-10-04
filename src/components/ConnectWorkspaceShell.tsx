@@ -9,7 +9,7 @@ import PremiumLogo from '@/components/PremiumLogo';
 import {
   LayoutDashboard, ClipboardCheck, BookOpenText, GraduationCap, FileText,
   CalendarDays, Menu, X, LogOut, ArrowUpRight, ChevronRight, Sparkles,
-  PanelLeftClose, PanelLeftOpen, Globe2, Bell, Users, CreditCard, ShieldCheck,
+  PanelLeftClose, PanelLeftOpen, Globe2, Users, CreditCard, ShieldCheck,
   UserRoundPlus, Activity, Library, Bus, ChartNoAxesCombined, Settings2,
   NotebookPen, BrainCircuit, BookCheck, BadgeCheck, BookOpen, Megaphone,
 } from 'lucide-react';
@@ -72,6 +72,9 @@ export default function ConnectWorkspaceShell({ children, title, role }:{childre
   const {schoolName,schoolLogo}=useSchoolBranding();
   const [drawer,setDrawer]=useState(false);
   const [compact,setCompact]=useState(false);
+  const [mobile,setMobile]=useState(false);
+  useEffect(()=>{const update=()=>setMobile(window.innerWidth<1024);update();window.addEventListener('resize',update);return()=>window.removeEventListener('resize',update)},[]);
+  const effectiveCompact=compact&&!mobile;
   const contentRef=useRef<HTMLElement|null>(null);
   const links=navigation[role];
   const copy=roleCopy[role];
@@ -89,27 +92,27 @@ export default function ConnectWorkspaceShell({ children, title, role }:{childre
   const goLogout=()=>{logout();router.replace(`/login?next=%2F${role}&logout=1`)};
   if(!user)return null;
   const nav=(<>
-    <div className="tws-brand"><div className="tws-brand-mark"><PremiumLogo src={schoolLogo||'/ilm-logo.svg'} size={43}/></div>{!compact&&<div className="tws-brand-copy"><strong title={schoolName}>{schoolName}</strong><span>APEX CONNECT</span><small>{copy.eyebrow}</small></div>}</div>
-    <div className="tws-nav-label">{compact?'—':'WORKSPACE'}</div>
+    <div className="tws-brand"><div className="tws-brand-mark"><PremiumLogo src={schoolLogo||'/ilm-logo.svg'} size={43}/></div>{!effectiveCompact&&<div className="tws-brand-copy"><strong title={schoolName}>{schoolName}</strong><span>APEX CONNECT</span><small>{copy.eyebrow}</small></div>}</div>
+    <div className="tws-nav-label">{effectiveCompact?'—':'WORKSPACE'}</div>
     <nav className="tws-links" aria-label={`${copy.name} portal navigation`}>
       {links.map(({label,href,icon:Icon})=>{
         const active=pathname===href||(href!==`/${role}`&&pathname.startsWith(`${href}/`)&&!links.some(other=>other.href!==href&&other.href.startsWith(`${href}/`)&&pathname.startsWith(other.href)));
-        return <Link key={href} href={href} title={compact?label:undefined} aria-current={active?'page':undefined} onClick={()=>setDrawer(false)} className={`tws-nav-link ${active?'tws-nav-active':''}`}><Icon size={19} strokeWidth={1.9}/>{!compact&&<span>{label}</span>}{active&&!compact&&<span className="tws-nav-dot"/>}</Link>;
+        return <Link key={href} href={href} title={effectiveCompact?label:undefined} aria-current={active?'page':undefined} onClick={()=>setDrawer(false)} className={`tws-nav-link ${active?'tws-nav-active':''}`}><Icon size={19} strokeWidth={1.9}/>{!effectiveCompact&&<span>{label}</span>}{active&&!effectiveCompact&&<span className="tws-nav-dot"/>}</Link>;
       })}
     </nav>
     <div className="tws-sidebar-bottom">
-      {!compact&&<div className="tws-side-note"><span className="tws-note-glyph"><Sparkles size={17}/></span><strong>{copy.note}</strong><small>{copy.description}</small><Link href={copy.href}>{copy.action} <ArrowUpRight size={13}/></Link></div>}
-      <div className="tws-profile"><span className="tws-avatar">{String(user.name||role[0]).charAt(0).toUpperCase()}</span>{!compact&&<div><strong>{user.name||`${copy.name} account`}</strong><small>{copy.name} workspace</small></div>}</div>
-      <button type="button" className="tws-signout" onClick={goLogout}><LogOut size={17}/>{!compact&&'Sign out'}</button>
-      <button type="button" className="tws-compact-toggle" onClick={()=>setCompact(v=>!v)} aria-label={compact?'Expand sidebar':'Collapse sidebar'}>{compact?<PanelLeftOpen size={17}/>:<PanelLeftClose size={17}/>}</button>
+      {!effectiveCompact&&<div className="tws-side-note"><span className="tws-note-glyph"><Sparkles size={17}/></span><strong>{copy.note}</strong><small>{copy.description}</small><Link href={copy.href}>{copy.action} <ArrowUpRight size={13}/></Link></div>}
+      <div className="tws-profile"><span className="tws-avatar">{String(user.name||role[0]).charAt(0).toUpperCase()}</span>{!effectiveCompact&&<div><strong>{user.name||`${copy.name} account`}</strong><small>{copy.name} workspace</small></div>}</div>
+      <button type="button" className="tws-signout" onClick={goLogout}><LogOut size={17}/>{!effectiveCompact&&'Sign out'}</button>
+      <button type="button" className="tws-compact-toggle" onClick={()=>setCompact(v=>!v)} aria-label={effectiveCompact?'Expand sidebar':'Collapse sidebar'}>{effectiveCompact?<PanelLeftOpen size={17}/>:<PanelLeftClose size={17}/>}</button>
     </div>
   </>);
   return <div className={`tws-shell cw-shell cw-role-${role}`}>
     {drawer&&<button className="tws-drawer-scrim" type="button" aria-label="Close navigation" onClick={()=>setDrawer(false)}/>}
-    <aside className={`tws-sidebar ${compact?'tws-sidebar-compact':''} ${drawer?'tws-sidebar-open':''}`}>{nav}</aside>
+    <aside className={`tws-sidebar ${effectiveCompact?'tws-sidebar-compact':''} ${drawer?'tws-sidebar-open':''}`}>{nav}</aside>
     <div className="tws-workspace">
       <header className="tws-topbar"><div className="tws-topbar-left"><button type="button" className="tws-menu-button" onClick={()=>setDrawer(v=>!v)} aria-label="Toggle navigation" aria-expanded={drawer}>{drawer?<X size={20}/>:<Menu size={20}/>}</button><div className="tws-breadcrumb">{copy.breadcrumb} <ChevronRight size={14}/> <strong>{title}</strong></div></div>
-        <div className="tws-topbar-right"><span className="tws-school-pill"><span className="tws-live-dot"/> {schoolName}</span><Link className="tws-header-notices" href={`/${role}`} aria-label={`${copy.name} overview`}><Bell size={18}/></Link><span className="tws-top-avatar" aria-hidden="true">{String(user.name||role[0]).charAt(0).toUpperCase()}</span></div></header>
+        <div className="tws-topbar-right"><span className="tws-school-pill"><span className="tws-live-dot"/> {schoolName}</span><Link className="tws-header-notices" href={`/${role}`} aria-label={`Go to ${copy.name} overview`} title="Return to overview"><LayoutDashboard size={18}/></Link><span className="tws-top-avatar" aria-hidden="true">{String(user.name||role[0]).charAt(0).toUpperCase()}</span></div></header>
       <main ref={contentRef} className="tws-main" id={`${role}-main`}><div className="tws-main-inner">{children}</div></main>
     </div>
   </div>;
