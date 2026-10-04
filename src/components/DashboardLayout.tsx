@@ -1,6 +1,7 @@
 "use client";
 
 import Sidebar from './Sidebar';
+import TeacherWorkspaceShell from './TeacherWorkspaceShell';
 import Topbar from './Topbar';
 import { useAuth } from '@/context/AuthContext';
 import { usePathname, useRouter } from 'next/navigation';
@@ -97,6 +98,7 @@ export default function DashboardLayout({
   }, [user, loading, router]);
 
   if (loading || brandingLoading) {
+    if (role === 'teacher') return <div className="min-h-screen flex items-center justify-center bg-[#f6f6f2] px-6 text-[#334e3d]"><div className="w-full max-w-md rounded-[24px] border border-[#e4e9e1] bg-white p-8 text-center shadow-[0_12px_45px_#38533a10]"><div className="mx-auto grid h-14 w-14 place-items-center rounded-2xl bg-[#edf2e9]"><PremiumLogo src={schoolLogo || '/ilm-logo.svg'} size={43}/></div><p className="mt-5 font-serif text-xl font-semibold">Preparing your faculty workspace</p><p className="mt-2 text-xs text-[#89958b]">Verifying your session and live school information…</p><div className="mt-5 h-1.5 overflow-hidden rounded-full bg-[#e5eee3]"><div className="h-full rounded-full bg-[#659f79] transition-[width]" style={{width: `${loadingProgress}%`}}/></div></div></div>;
     return (
       <div className="min-h-screen bg-[#050d1a] flex items-center justify-center px-6 relative overflow-hidden">
         <div className="relative w-full max-w-2xl rounded-[34px] border border-white/10 bg-white/6 backdrop-blur-2xl p-8 sm:p-10 shadow-[0_30px_120px_rgba(0,0,0,0.55)] overflow-hidden">
@@ -143,6 +145,9 @@ export default function DashboardLayout({
   }
 
   if (!user) return null;
+
+  // Independent light faculty experience; do not change Admin, Parent or Student shells.
+  if (role === 'teacher') return <TeacherWorkspaceShell title={title}>{children}</TeacherWorkspaceShell>;
 
   return (
     <div className="min-h-screen bg-slate-900 text-slate-50 flex relative">
