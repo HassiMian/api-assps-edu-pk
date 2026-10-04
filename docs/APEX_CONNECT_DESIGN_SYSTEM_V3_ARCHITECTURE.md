@@ -136,3 +136,17 @@ The second module wave migrates Parent Finance, Parent Reports, Student Exams, S
 - Public v3.2 Build ID before P2: `pSomSq5MQnpsmkDsEU9K5`; preserve this green candidate for rollback during promotion.
 - No school fee, exam, homework, child or parent database mutation in P2 visual work.
 - Still requires manual multi-breakpoint screenshots/keyboard focus tests of dynamic screens, and independent backend features for online exam publishing, approved quizzes and homework assignments before calling these full product integrations complete.
+
+## V3.4 — Focused P3 faculty workflow trust release (2026-10-04)
+
+This is a three-screen subset of P3, NOT a claim that every Admin module has been visually converted. Preserves school tenant authorization and source API contracts.
+
+- **Admin Teachers:** fetching staff and teacher assignments/class options uses `Promise.allSettled` with separate availability, rather than converting failed assignment reads into an apparently legitimate empty set. Assignment editor is withheld when data cannot be verified. Add/delete assignment and teacher deletion require `success:true`; teacher list re-fetches after confirmed writes instead of optimistic local changes. Uses shared light operational heading, responsive table and scoped modal surface.
+- **Teacher Classes:** session scheduling checks confirmed backend `success:true` before claiming success, default class_date now respects Asia/Karachi, failed timetable/online-class/assignment reads surface errors and corresponding metrics show em dash rather than zero. No assigned class => informative setup state and scheduling disabled.
+- **Teacher Report Cards:** student-roster and per-student result fetches distinguish API errors from genuine zero records, result arrays are validated, and printing is blocked until verified real results exist. Accessible search and light module heading included while existing print layout is preserved.
+- Added `scripts/check-connect-p3-integrity.mjs` (11/11 PASS), alongside P1 10/10, P2 11/11 and V3 contrast 22/22.
+- Isolated Next 16.2.6 production build and TypeScript PASS, Build ID `VbG3bcmBdKZWoz7RCCDyH`. Authenticated staging and post-promote green role gate: Admin17, Teacher8, Student5, Parent3 static inner pages HTTP200, dashboard routes HTTP200, cross-role redirects HTTP307. Previous P2 green saved `.next-candidate-before-p3-20261004` for rollback. No actual ASSPS student/fee/teacher records modified by V3.4 visual work.
+
+### Remaining P3 work and constraints
+
+Admin Employees, Announcements, Setup/SaaS configuration, Finance subflows, teacher online-exam detail and printable report cards require page-specific browser screenshot, keyboard focus, table and modal contrast checks. The full dynamic online-test route requires a real authorized exam fixture and missing student-published-exam backend integration must be addressed in separate reviewed server work. A Source/TypeScript+authenticated-route PASS does **not** prove all 39 inner pages pixel-perfect or all end-to-end mutations validated. Keep main SaaS repo/attendance branch untouched.

@@ -1,6 +1,7 @@
 "use client";
 
 import DashboardLayout from '@/components/DashboardLayout';
+import {PortalModuleHeading} from '@/components/PortalModulePrimitives';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useState, useEffect } from 'react';
 import api from '@/utils/api';
@@ -40,6 +41,7 @@ export default function TeacherManagement() {
   const [assignmentTeacher, setAssignmentTeacher] = useState<Teacher | null>(null);
   const [assignmentForm, setAssignmentForm] = useState({ class_name: '', section: '', subject: '' });
   const [assignmentSaving, setAssignmentSaving] = useState(false);
+  const [assignmentLoadError,setAssignmentLoadError] = useState('');
 
   useEffect(() => {
     fetchTeachers();
@@ -65,14 +67,18 @@ export default function TeacherManagement() {
     try {
       setLoading(true);
       setError('');
-      const [staffRes, assignmentRes, teachingRes] = await Promise.all([
+      const [staffResult, assignmentResult, teachingResult] = await Promise.allSettled([
         api.get('/employees?active=true'),
-        api.get('/portal/teacher-assignments').catch(() => ({ data: { data: [] } })),
-        api.get('/portal/teaching-options').catch(() => ({ data: { data: { classes: [] } } })),
+        api.get('/portal/teacher-assignments'),
+        api.get('/portal/teaching-options'),
       ]);
-      const staff = Array.isArray(staffRes.data?.data) ? staffRes.data.data : [];
-      const liveAssignments = Array.isArray(assignmentRes.data?.data) ? assignmentRes.data.data : [];
-      const liveClassOptions = Array.isArray(teachingRes.data?.data?.classes) ? teachingRes.data.data.classes : [];
+      if(staffResult.status!=='fulfilled'||!staffResult.value.data?.success||!Array.isArray(staffResult.value.data?.data))throw new Error('Staff register unavailable.');
+      const staff = staffResult.value.data.data;
+      const mappingReady=assignmentResult.status==='fulfilled' && assignmentResult.value.data?.success && Array.isArray(assignmentResult.value.data?.data);
+      const optionsReady=teachingResult.status==='fulfilled' && teachingResult.value.data?.success && Array.isArray(teachingResult.value.data?.data?.classes);
+      const liveAssignments = mappingReady ? assignmentResult.value.data.data : [];
+      const liveClassOptions = optionsReady ? teachingResult.value.data.data.classes : [];
+      setAssignmentLoadError(!mappingReady||!optionsReady ? 'Class assignment information is temporarily unavailable. Save and delete are disabled until a successful refresh.' : '');
       setAssignments(liveAssignments);
       setClassOptions(liveClassOptions);
       const teacherRows = staff.filter((employee: any) =>
@@ -84,6 +90,7 @@ export default function TeacherManagement() {
     } catch {
       setTeachers([]);
       setError('Live teacher records could not be loaded. No sample data is being shown.');
+      setAssignmentLoadError('Teacher assignments could not be verified.');
     } finally {
       setLoading(false);
     }
@@ -104,12 +111,12 @@ export default function TeacherManagement() {
       if (editingTeacher) {
         const res = await api.put(`/employees/${editingTeacher.id}`, { ...formData, is_active: formData.status !== 'inactive', portal_role: 'teacher', portal_active: true });
         if (res.data.success) {
-          setTeachers(prev => prev.map(t => t.id === editingTeacher.id ? { ...t, ...formData } as Teacher : t));
+          await fetchTeachers();
         }
       } else {
         const res = await api.post('/employees', { ...formData, designation: formData.designation || 'Teacher', is_active: true, portal_role: 'teacher', portal_active: true });
         if (res.data.success) {
-          setTeachers(prev => [...prev, normalizeTeacher(res.data.data)]);
+          await fetchTeachers();
           const identity = res.data?.portal_identity;
           if (identity?.created && identity?.temporaryPassword) {
             setNewTeacherLogin({ loginId: identity.loginId, temporaryPassword: identity.temporaryPassword });
@@ -130,8 +137,9 @@ export default function TeacherManagement() {
 
   const handleDelete = async (id: string) => {
     try {
-      await api.delete(`/employees/${id}`);
-      setTeachers(prev => prev.filter(t => t.id !== id));
+      const deleted = await api.delete(`/employees/${id}`);
+      if(!deleted.data?.success)throw new Error(deleted.data?.message || 'Teacher deletion was not confirmed.');
+      await fetchTeachers();
     } catch {
       setError('Teacher could not be deleted from the live backend.');
     }
@@ -151,6 +159,7 @@ export default function TeacherManagement() {
   };
 
   const openAssignments = (teacher: Teacher) => {
+    if(assignmentLoadError){setError(assignmentLoadError);return;}
     if (!teacher.user_id) {
       setError('Teacher portal identity is missing. Repair the teacher login first.');
       return;
@@ -165,12 +174,13 @@ export default function TeacherManagement() {
     try {
       setAssignmentSaving(true);
       setError('');
-      await api.post('/portal/teacher-assignments', {
+      const assignmentResponse = await api.post('/portal/teacher-assignments', {
         teacher_user_id: assignmentTeacher.user_id,
         class_name: assignmentForm.class_name,
         section: assignmentForm.section,
         subject: assignmentForm.subject,
       });
+      if(!assignmentResponse.data?.success)throw new Error(assignmentResponse.data?.message || 'Assignment save was not confirmed.');
       await fetchTeachers();
     } catch (err: any) {
       setError(err?.response?.data?.message || 'Teacher class assignment could not be saved.');
@@ -183,7 +193,8 @@ export default function TeacherManagement() {
     try {
       setAssignmentSaving(true);
       setError('');
-      await api.delete(`/portal/teacher-assignments/${assignmentId}`);
+      const result = await api.delete(`/portal/teacher-assignments/${assignmentId}`);
+      if(!result.data?.success)throw new Error(result.data?.message || 'Assignment removal was not confirmed.');
       await fetchTeachers();
     } catch (err: any) {
       setError(err?.response?.data?.message || 'Teacher class assignment could not be removed.');
@@ -200,6 +211,8 @@ export default function TeacherManagement() {
 
   return (
     <DashboardLayout role="admin" title="Teacher Management">
+      <PortalModuleHeading eyebrow="FACULTY OPERATIONS" title="Teachers and assignments" description="Manage verified staff accounts, subjects and server-linked classes. Unavailable assignment data is never treated as an empty register."/>
+      {assignmentLoadError&&<div className="cw-error mb-5 flex flex-wrap items-center justify-between gap-3" role="alert"><span>{assignmentLoadError}</span><button type="button" className="cw-module-secondary" onClick={fetchTeachers}>Retry assignments</button></div>}
       {error && <div className="mb-4 rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-300">{error}</div>}
       {newTeacherLogin && <div className="mb-4 rounded-xl border border-amber-500/30 bg-slate-900 px-4 py-3 text-sm text-white space-y-2">
         <p className="font-semibold text-amber-300">One-time teacher login handoff</p>
@@ -263,7 +276,7 @@ export default function TeacherManagement() {
           </select>
         </div>
         <div className="flex gap-3">
-          <button className="flex items-center gap-2 px-4 py-2.5 rounded-xl border border-slate-700 text-slate-500 text-sm cursor-not-allowed opacity-50" title="Coming soon">
+          <button className="flex items-center gap-2 px-4 py-2.5 rounded-xl border border-slate-700 text-slate-500 text-sm cursor-not-allowed opacity-50" title="Export is not available yet" disabled aria-disabled="true">
             <Download className="w-4 h-4" /> Export
           </button>
           <motion.button
@@ -289,7 +302,7 @@ export default function TeacherManagement() {
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full text-sm">
+            <table className="cw-data-table">
               <thead>
                 <tr className="border-b border-slate-700/50 text-slate-400 text-left">
                   <th className="p-4 font-medium">Teacher</th>
@@ -368,7 +381,7 @@ export default function TeacherManagement() {
       {/* Add/Edit Modal */}
       <AnimatePresence>
         {showModal && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <div className="cw-modal-backdrop">
             <motion.div
               initial={{ opacity: 0, scale: 0.95, y: 20 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
@@ -524,7 +537,7 @@ export default function TeacherManagement() {
       {/* Delete Confirmation */}
       <AnimatePresence>
         {deleteId && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <div className="cw-modal-backdrop">
             <motion.div
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}

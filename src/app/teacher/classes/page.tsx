@@ -1,6 +1,8 @@
 "use client";
 
 import DashboardLayout from '@/components/DashboardLayout';
+import {PortalModuleHeading,PortalSupportNote} from '@/components/PortalModulePrimitives';
+import {schoolDateISO} from '@/lib/schoolDate';
 import api from '@/utils/api';
 import { useApiData } from '@/hooks/useApiData';
 import { useEffect, useMemo, useState } from 'react';
@@ -23,9 +25,9 @@ function formatShortDate(dateStr?: string) {
 }
 
 export default function TeacherTimetable() {
-  const { data: classOptions } = useApiData<any>('/portal/teaching-options', EMPTY);
-  const { data: onlineClasses, refetch: refetchOnlineClasses } = useApiData<any>('/portal/online-classes', EMPTY);
-  const { data: timetableData, refetch: refetchTimetable } = useApiData<any>('/portal/timetable', { timetable: [], byDay: {} });
+  const { data: classOptions,loading:classesLoading,error:classesError,refetch:reloadClasses } = useApiData<any>('/portal/teaching-options', EMPTY);
+  const { data: onlineClasses,loading:onlineLoading,error:onlineError,refetch: refetchOnlineClasses } = useApiData<any>('/portal/online-classes', EMPTY);
+  const { data: timetableData,loading:timetableLoading,error:timetableError,refetch: refetchTimetable } = useApiData<any>('/portal/timetable', { timetable: [], byDay: {} });
 
   const options: ClassOption[] = classOptions?.classes || [];
   const timetableByDay: Record<string, any[]> = timetableData?.byDay || {};
@@ -36,7 +38,7 @@ export default function TeacherTimetable() {
     section: 'A',
     subject: '',
     title: '',
-    class_date: new Date().toISOString().slice(0, 10),
+    class_date: schoolDateISO(),
     start_time: '',
     end_time: '',
     meeting_link: '',
@@ -71,7 +73,8 @@ export default function TeacherTimetable() {
     setFeedback(null);
     setSubmitting(true);
     try {
-      await api.post('/portal/online-classes', form);
+      const response = await api.post('/portal/online-classes', form);
+      if(!response.data?.success)throw new Error(response.data?.message || 'The schedule was not confirmed by the server.');
       setFeedback({ type: 'success', text: 'Online class scheduled and notifications were stored in the backend.' });
       await Promise.all([refetchOnlineClasses(), refetchTimetable()]);
       setForm(prev => ({
@@ -90,15 +93,19 @@ export default function TeacherTimetable() {
   };
 
   const classList = options.length ? options : [{ class_name: '', section: '' }];
+  const sourceError=classesError||onlineError||timetableError;
 
   return (
     <DashboardLayout role="teacher" title="Online Classes">
+      <PortalModuleHeading eyebrow="TEACHING SCHEDULE" title="Classes and sessions" description="Plan classes using the real school-local date and only assignments linked to this faculty identity."/>
+      {sourceError&&<div className="cw-error mb-5 flex flex-wrap items-center justify-between gap-3" role="alert"><span>Some class, timetable or online-session data could not be loaded. Figures should not be interpreted as verified zero.</span><button type="button" className="cw-module-secondary" onClick={()=>{reloadClasses();refetchOnlineClasses();refetchTimetable();}}>Retry live data</button></div>}
+      {!classesLoading&&!classesError&&!options.length&&<div className="mb-5"><PortalSupportNote>No classes have been linked to this teacher yet. A school administrator must verify class and subject assignments before an online session can be scheduled.</PortalSupportNote></div>}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
         {[
-          { label: 'Scheduled Classes', value: summary.totalOnlineClasses, icon: CalendarDays },
-          { label: 'Weekly Periods', value: summary.totalPeriods, icon: Clock },
-          { label: 'Upcoming Sessions', value: summary.upcoming, icon: CheckCircle2 },
-          { label: 'Active Days', value: summary.classesCovered, icon: Users },
+          { label: 'Scheduled Classes', value: onlineError||onlineLoading?'—':summary.totalOnlineClasses, icon: CalendarDays },
+          { label: 'Weekly Periods', value: timetableError||timetableLoading?'—':summary.totalPeriods, icon: Clock },
+          { label: 'Upcoming Sessions', value: onlineError||onlineLoading?'—':summary.upcoming, icon: CheckCircle2 },
+          { label: 'Active Days', value: timetableError||timetableLoading?'—':summary.classesCovered, icon: Users },
         ].map((card) => (
           <div key={card.label} className="glass-card p-5">
             <div className="flex items-center gap-4">
@@ -249,7 +256,7 @@ export default function TeacherTimetable() {
             <div className="pt-3 border-t border-slate-700/50 flex justify-end">
               <button
                 type="submit"
-                disabled={submitting}
+                disabled={submitting || !!classesError || !options.length}
                 className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-blue-600 to-cyan-500 text-white font-semibold px-6 py-3 shadow-lg shadow-blue-500/25 transition-all active:scale-95 disabled:opacity-60"
               >
                 {submitting ? <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" /> : <PlusCircle className="w-5 h-5" />}

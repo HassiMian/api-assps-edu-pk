@@ -1,6 +1,7 @@
 "use client";
 
 import DashboardLayout from "@/components/DashboardLayout";
+import {PortalModuleHeading} from '@/components/PortalModulePrimitives';
 import api from "@/utils/api";
 import {
   FileText,
@@ -50,6 +51,8 @@ export default function ReportCards() {
   const [selectedStudent, setSelectedStudent] = useState<Student | null>(null);
   const [results, setResults] = useState<Result[]>([]);
   const [resultsLoading, setResultsLoading] = useState(false);
+  const [rosterError,setRosterError] = useState('');
+  const [resultsError,setResultsError] = useState('');
 
   useEffect(() => {
     fetchStudents();
@@ -59,8 +62,10 @@ export default function ReportCards() {
     try {
       setLoading(true);
       const res = await api.get("/admin/students");
-      setStudents(res.data?.data || []);
-    } catch {
+      if(!res.data?.success||!Array.isArray(res.data?.data))throw new Error(res.data?.message || 'Student roster could not be verified.');
+      setStudents(res.data.data);setRosterError('');
+    } catch (err:any) {
+      setRosterError(err?.response?.data?.message||err?.message||'Teacher student roster is currently unavailable.');
       setStudents([]);
     } finally {
       setLoading(false);
@@ -69,11 +74,13 @@ export default function ReportCards() {
 
   async function loadStudentResults(student: Student) {
     setSelectedStudent(student);
-    setResultsLoading(true);
+    setResultsLoading(true);setResultsError('');setResults([]);
     try {
       const res = await api.get(`/exams/student-results/${student.id}`);
-      setResults(res.data?.data || []);
-    } catch {
+      if(!res.data?.success||!Array.isArray(res.data?.data))throw new Error(res.data?.message || 'Saved assessment results are unavailable.');
+      setResults(res.data.data);
+    } catch (err:any) {
+      setResultsError(err?.response?.data?.message||err?.message||'Report results could not be verified.');
       setResults([]);
     } finally {
       setResultsLoading(false);
@@ -113,11 +120,16 @@ export default function ReportCards() {
   })();
 
   const printReport = () => {
+    if(resultsLoading||resultsError||!results.length)return;
     window.print();
   };
 
   return (
     <DashboardLayout role="teacher" title="Automated Report Cards">
+      <div className="print:hidden"><PortalModuleHeading eyebrow="OFFICIAL ACADEMIC REPORTING" title="Report cards" description="Browse verified school-linked assessment records. Printing is available only when real saved results have loaded."/>
+      {rosterError&&<div role="alert" className="cw-error mb-5 flex flex-wrap items-center justify-between gap-3"><span>{rosterError}</span><button type="button" onClick={fetchStudents} className="cw-module-secondary">Retry roster</button></div>}
+      {resultsError&&<div role="alert" className="cw-error mb-5 flex flex-wrap items-center justify-between gap-3"><span>{resultsError}</span>{selectedStudent&&<button type="button" onClick={()=>loadStudentResults(selectedStudent)} className="cw-module-secondary">Retry results</button>}</div>}
+      </div>
       <div className="flex flex-col lg:flex-row gap-6 h-[calc(100vh-140px)] print:h-auto">
         {/* Left Sidebar: Students List (Hidden on Print) */}
         <div className="w-full lg:w-1/3 flex flex-col glass-card overflow-hidden print:hidden">
@@ -126,11 +138,12 @@ export default function ReportCards() {
             <div className="relative">
               <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
               <input
-                type="text"
+                type="search"
+                aria-label="Search assigned students by name, roll or class"
                 placeholder="Search by name, roll, class..."
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                className="w-full bg-slate-900 border border-slate-700 rounded-xl pl-9 pr-4 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="cw-field w-full pl-9"
               />
             </div>
           </div>
@@ -138,7 +151,7 @@ export default function ReportCards() {
             {loading ? (
               <div className="py-12 text-center"><Loader2 className="w-6 h-6 animate-spin text-blue-400 mx-auto" /></div>
             ) : filteredStudents.length === 0 ? (
-              <div className="py-12 text-center text-slate-500 text-sm">No students found.</div>
+              <div className="py-12 px-4 text-center text-slate-500 text-sm">{rosterError?'Unable to verify assigned students.':search.trim()?'No students match the search.':'No assigned students were returned.'}</div>
             ) : (
               <div className="space-y-1">
                 {filteredStudents.map((s) => (
@@ -186,7 +199,8 @@ export default function ReportCards() {
                 </div>
                 <button
                   onClick={printReport}
-                  className="flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg transition-colors font-semibold text-sm"
+                  disabled={resultsLoading||!!resultsError||!results.length}
+                  className="flex items-center gap-2 px-4 py-2 bg-emerald-700 hover:bg-emerald-800 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-lg transition-colors font-semibold text-sm"
                 >
                   <Printer className="w-4 h-4" /> Print Report Card
                 </button>
@@ -196,7 +210,7 @@ export default function ReportCards() {
               <div className="glass-card p-8 bg-slate-900 border-slate-700 print:border-none print:shadow-none print:p-0">
                 <div className="text-center mb-8 border-b border-slate-700 pb-6 print:border-slate-300">
                   <h1 className="text-3xl font-black text-white print:text-black uppercase tracking-wider">Student Academic Profile</h1>
-                  <p className="text-slate-400 print:text-slate-600 mt-2">Al Siddique Smart School</p>
+                  <p className="text-slate-400 print:text-slate-600 mt-2">School-verified assessment record</p>
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mb-8">
@@ -252,7 +266,7 @@ export default function ReportCards() {
 
                 {Object.keys(resultsByExam).length === 0 ? (
                   <div className="text-center py-12 text-slate-500 border border-dashed border-slate-700 rounded-2xl print:border-slate-300">
-                    No examination results found for this student.
+                    {resultsError?'Results could not be verified. Please retry.':'No examination results have been saved for this student.'}
                   </div>
                 ) : (
                   <div className="space-y-8">
