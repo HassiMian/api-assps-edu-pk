@@ -1,104 +1,50 @@
 "use client";
 
-import DashboardLayout from "@/components/DashboardLayout";
-import Link from "next/link";
-import { useEffect, useState } from "react";
-import { Clock, Globe, Loader2, BookOpen } from "lucide-react";
-import { fetchAvailableOnlineExams } from "@/lib/onlineExamService";
+import DashboardLayout from '@/components/DashboardLayout';
+import {PortalModuleHeading,PortalSubheading,PortalSupportNote} from '@/components/PortalModulePrimitives';
+import {DataEmpty,DataError} from '@/components/PortalDashboardPrimitives';
+import {fetchAvailableOnlineExams} from '@/lib/onlineExamService';
+import {useEffect,useState} from 'react';
+import Link from 'next/link';
+import {ArrowUpRight,BookOpenText,Clock3,GraduationCap,RefreshCw} from 'lucide-react';
 
-type ExamRow = {
-  id: number;
-  title: string;
-  subject?: string;
-  class?: string;
-  duration?: number;
-  total_marks?: number;
-  status?: string;
-  created_at?: string;
-};
-
-export default function StudentExamsPage() {
-  const [exams, setExams] = useState<ExamRow[]>([]);
-  const [classFilter, setClassFilter] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
-
-  useEffect(() => {
+type ExamRow={id:number;title:string;subject?:string;class?:string;duration?:number;total_marks?:number;status?:string};
+export default function StudentExamsPage(){
+  const [exams,setExams]=useState<ExamRow[]>([]);
+  const [classFilter,setClassFilter]=useState<string|null>(null);
+  const [loading,setLoading]=useState(true);
+  const [error,setError]=useState('');
+  const [reloadTick,setReloadTick]=useState(0);
+  useEffect(()=>{
+    let active=true;setLoading(true);setError('');
     fetchAvailableOnlineExams()
-      .then(({ exams: rows, meta }) => {
-        setExams(rows || []);
-        setClassFilter(meta?.classFilter || null);
+      .then(({exams:rows,meta})=>{
+        if(!active)return;
+        if(!Array.isArray(rows))throw new Error('Published exam records are unavailable.');
+        setExams(rows.filter((row:ExamRow)=>Number.isInteger(Number(row.id))&&Number(row.id)>0));
+        setClassFilter(meta?.classFilter||null);
       })
-      .catch(() => setError("Could not load exams. Please try again."))
-      .finally(() => setLoading(false));
-  }, []);
-
-  return (
-    <DashboardLayout role="student" title="Online Exams">
-      <div className="mb-8">
-        <div className="inline-flex items-center gap-2 rounded-full border border-cyan-500/25 bg-cyan-500/10 px-4 py-1.5 text-xs font-bold uppercase tracking-[0.18em] text-cyan-300">
-          <Globe className="h-3.5 w-3.5" />
-          Live assessments
-        </div>
-        <h2 className="mt-4 text-2xl font-bold text-white">Published exams</h2>
-        <p className="mt-2 max-w-[65ch] text-sm leading-7 text-slate-400">
-          Exams published by your teachers appear here. Select one to begin — timer starts when you open the paper.
-          {classFilter && (
-            <span className="mt-2 block text-cyan-300/90">Showing exams for {classFilter} and school-wide papers.</span>
-          )}
-        </p>
-      </div>
-
-      {loading && (
-        <div className="flex items-center justify-center gap-3 py-20 text-slate-400">
-          <Loader2 className="h-5 w-5 animate-spin" />
-          Loading exams…
-        </div>
-      )}
-
-      {!loading && error && (
-        <div className="rounded-2xl border border-red-500/20 bg-red-500/5 p-6 text-sm text-red-300">{error}</div>
-      )}
-
-      {!loading && !error && exams.length === 0 && (
-        <div className="rounded-2xl border border-dashed border-slate-700 bg-slate-900/40 p-12 text-center">
-          <BookOpen className="mx-auto mb-4 h-10 w-10 text-slate-500" />
-          <p className="font-semibold text-white">No live exams right now</p>
-          <p className="mt-2 text-sm text-slate-400">Check back when your teacher publishes an online test.</p>
-        </div>
-      )}
-
-      {!loading && exams.length > 0 && (
-        <div className="grid gap-4 md:grid-cols-2">
-          {exams.map((exam) => (
-            <Link
-              key={exam.id}
-              href={`/student/online-test/${exam.id}`}
-              className="group rounded-2xl border border-white/10 bg-slate-800/50 p-6 transition duration-200 ease-out hover:-translate-y-1 hover:border-cyan-500/30 hover:bg-slate-800/80"
-            >
-              <div className="flex items-start justify-between gap-4">
-                <div>
-                  <h3 className="text-lg font-bold text-white group-hover:text-cyan-200">{exam.title}</h3>
-                  <p className="mt-1 text-sm text-slate-400">
-                    {[exam.subject, exam.class].filter(Boolean).join(" · ") || "General"}
-                  </p>
-                </div>
-                <span className="shrink-0 rounded-full bg-emerald-500/15 px-3 py-1 text-xs font-bold text-emerald-400">
-                  Live
-                </span>
-              </div>
-              <div className="mt-5 flex flex-wrap gap-4 text-xs text-slate-400">
-                <span className="flex items-center gap-1.5">
-                  <Clock className="h-3.5 w-3.5" />
-                  {exam.duration || 30} min
-                </span>
-                <span>{exam.total_marks || "—"} marks</span>
-              </div>
-              <div className="mt-4 text-sm font-semibold text-cyan-400">Start exam →</div>
-            </Link>
-          ))}
-        </div>
-      )}
-    </DashboardLayout>
-  );
+      .catch((err:any)=>{if(active){setError(err?.response?.data?.message||err?.message||'Could not load the published exams.');setExams([])}})
+      .finally(()=>{if(active)setLoading(false)});
+    return()=>{active=false};
+  },[reloadTick]);
+  return <DashboardLayout role="student" title="Online exams">
+    <PortalModuleHeading eyebrow="LEARNING & ASSESSMENTS" title="Published examinations" description="Find assessments released for your own class by the school. Exam access remains controlled by the server."
+      actions={<button type="button" onClick={()=>setReloadTick(t=>t+1)} className="cw-module-secondary"><RefreshCw size={15}/> Refresh exams</button>}/>
+    {classFilter&&<div className="mb-5"><PortalSupportNote>Showing published examinations scoped to {classFilter}, including any school-wide papers that your account is allowed to access.</PortalSupportNote></div>}
+    {error&&<div className="mb-5"><DataError message={error} onRetry={()=>setReloadTick(t=>t+1)}/></div>}
+    <section className="cw-card"><PortalSubheading eyebrow="YOUR EXAM SPACE" title="Available papers" description="Select a published paper when you are ready. Always read its actual timing and submission instructions before starting."/>
+      {loading?<div role="status" aria-label="Loading published examinations" className="grid gap-3 sm:grid-cols-2">{[1,2,3,4].map(x=><div key={x} className="h-[157px] animate-pulse rounded-[15px] bg-[#f2f0f7]"/>)}</div>:
+      error?<div className="cw-empty"><BookOpenText size={24} color="var(--cw-accent)"/><strong>Exam list is temporarily unavailable</strong><p>Please retry later. Server errors are not interpreted as zero published papers.</p></div>:
+      !exams.length?<DataEmpty title="No published exams at the moment" description="New class-scoped assessments will appear here when a teacher publishes them."/>:
+      <div className="grid gap-3 sm:grid-cols-2">{exams.map(exam=>{
+        const duration=Number(exam.duration);
+        const marks=Number(exam.total_marks);
+        return <Link key={exam.id} href={`/student/online-test/${exam.id}`} className="group flex flex-col justify-between rounded-[16px] border border-[#e4e0ee] bg-gradient-to-br from-white to-[#faf8fd] p-5 text-[#342f42] no-underline transition hover:-translate-y-0.5 hover:border-[#bcb0d8] hover:shadow-[0_12px_26px_#382d5210] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[#6c55a0]">
+          <div><div className="flex items-start justify-between gap-3"><span className="grid h-10 w-10 place-items-center rounded-[11px] bg-[#f0eafa] text-[#6b5297]"><BookOpenText size={19}/></span><span className="rounded-full border border-[#ded4ed] bg-[#f2ecfb] px-3 py-1.5 text-[10px] font-extrabold uppercase tracking-wide text-[#66508c]">Published</span></div><h3 className="mt-4 font-serif text-[19px] font-semibold tracking-[-.025em] text-[#332d41] group-hover:text-[#644d92]">{exam.title||'School examination'}</h3><p className="mt-1 text-[12px] text-[#625a70]">{[exam.subject,exam.class].filter(Boolean).join(' · ')||'Class-scoped examination'}</p></div>
+          <div className="mt-5 flex flex-wrap items-center justify-between gap-3 border-t border-[#ece6f3] pt-4"><div className="flex flex-wrap gap-3 text-[11px] font-semibold text-[#62576d]"><span className="inline-flex items-center gap-1"><Clock3 size={14}/>{Number.isFinite(duration)&&duration>0?`${duration} minutes`:'See exam instructions'}</span><span className="inline-flex items-center gap-1"><GraduationCap size={14}/>{Number.isFinite(marks)&&marks>0?`${marks} marks`:'Marks in paper'}</span></div><span className="inline-flex items-center gap-1 text-[11px] font-extrabold text-[#695098]">Open paper <ArrowUpRight size={15}/></span></div>
+        </Link>;
+      })}</div>}
+    </section>
+  </DashboardLayout>;
 }

@@ -1,38 +1,18 @@
 "use client";
 
 import DashboardLayout from '@/components/DashboardLayout';
-import { BrainCircuit, Database, ShieldCheck } from 'lucide-react';
+import {PortalModuleHeading,PortalSupportNote} from '@/components/PortalModulePrimitives';
+import {DataEmpty} from '@/components/PortalDashboardPrimitives';
+import {GraduationCap,ShieldCheck,ArrowUpRight} from 'lucide-react';
+import Link from 'next/link';
 
-export default function StudentAIQuiz() {
-  return (
-    <DashboardLayout role="student" title="AI Quiz">
-      <div className="mx-auto max-w-3xl space-y-6">
-        <div className="glass-card p-8 border-l-4 border-l-purple-500">
-          <div className="flex items-start gap-4">
-            <div className="rounded-2xl bg-purple-500/10 p-3 text-purple-300">
-              <BrainCircuit className="h-7 w-7" />
-            </div>
-            <div>
-              <h2 className="text-2xl font-semibold text-white">Quiz engine is waiting for the approved question bank</h2>
-              <p className="mt-2 text-sm leading-7 text-slate-300">
-                Student quizzes are intentionally disabled until class-scoped, approved questions are available. APEX will not grant students Paper Generator privileges or generate unverified exam content through an admin/teacher endpoint.
-              </p>
-            </div>
-          </div>
-        </div>
-        <div className="grid gap-4 md:grid-cols-2">
-          <div className="glass-card p-6">
-            <Database className="h-6 w-6 text-cyan-400" />
-            <h3 className="mt-3 font-semibold text-white">Required source</h3>
-            <p className="mt-2 text-sm text-slate-400">Approved question bank mapped to the student&apos;s live class, subject, chapter, and topic.</p>
-          </div>
-          <div className="glass-card p-6">
-            <ShieldCheck className="h-6 w-6 text-emerald-400" />
-            <h3 className="mt-3 font-semibold text-white">Server-enforced scope</h3>
-            <p className="mt-2 text-sm text-slate-400">The future quiz endpoint will derive class identity server-side rather than trusting a class selected by the browser.</p>
-          </div>
-        </div>
-      </div>
-    </DashboardLayout>
-  );
+export default function StudentAIQuiz(){
+  return <DashboardLayout role="student" title="Practice quiz">
+    <PortalModuleHeading eyebrow="PRACTICE SPACE" title="Quiz studio" description="A calmer place for class-aligned practice, with questions drawn only from material the school has approved."/>
+    <div className="mb-6"><PortalSupportNote>The student quiz service is waiting for an approved, class-linked Question Bank endpoint. It will not display invented questions or grant students teacher-only Paper Generator access.</PortalSupportNote></div>
+    <div className="grid grid-cols-1 gap-5 lg:grid-cols-[1.15fr_.85fr]">
+      <section className="cw-card flex min-h-[285px] flex-col"><div className="cw-eyebrow">PRACTICE AVAILABILITY</div><h2 className="cw-card-title mt-3">Your quiz library</h2><div className="mt-5 flex-1"><DataEmpty title="No approved quiz available yet" description="When the school connects questions for your actual class, chapter and topic, new practice activities will appear here."/></div></section>
+      <section className="cw-card"><div className="cw-eyebrow">IN THE MEANTIME</div><h2 className="cw-card-title mt-3">Continue with school work</h2><p className="cw-card-description mt-3">Published online exams are separate from AI practice and may already be available for your assigned class.</p><Link href="/student/exams" className="cw-action mt-6"><span className="cw-action-icon"><GraduationCap size={19}/></span><span className="min-w-0 flex-1"><strong className="cw-action-label block">Published exams</strong><small className="cw-action-description block">View your real available papers</small></span><ArrowUpRight size={16} color="var(--cw-accent)"/></Link><div className="mt-5 flex items-start gap-3 rounded-[13px] border border-[#e5e0ef] bg-[#faf8fd] p-4"><ShieldCheck size={18} className="mt-0.5 shrink-0 text-[#69539a]"/><p className="text-[12px] leading-6 text-[#625772]">Practice will respect your actual class and school access rules. It will not invent assessment marks or rank you against other students.</p></div></section>
+    </div>
+  </DashboardLayout>;
 }

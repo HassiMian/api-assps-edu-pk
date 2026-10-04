@@ -1,152 +1,70 @@
 "use client";
 
 import DashboardLayout from '@/components/DashboardLayout';
-import { motion } from 'framer-motion';
-import { FileText, Download, Target, Calendar, CheckSquare, XSquare, Briefcase, GraduationCap, Loader2 } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import {PortalModuleHeading,PortalSubheading,PortalSupportNote} from '@/components/PortalModulePrimitives';
+import {DataEmpty,DataError} from '@/components/PortalDashboardPrimitives';
+import {useApiData} from '@/hooks/useApiData';
+import {CalendarCheck,RefreshCw,Users,ClipboardCheck,FileText} from 'lucide-react';
+import {useEffect,useState} from 'react';
 import api from '@/utils/api';
-import { useApiData } from '@/hooks/useApiData';
 
-type ExamNotification = {
-  id: number;
-  title: string;
-  message: string;
-  time?: string;
-  metadata?: { pct?: number; grade?: string };
-};
+type Breakdown={name:string;value:number};
+type Snapshot={stats?:{totalStudents?:number;presentCount?:number;absentCount?:number;leaveCount?:number;attPct?:number};attendanceBreakdown?:Breakdown[]};
+type ExamNotification={id:number;title?:string;message?:string;time?:string;type?:string;metadata?:{pct?:number;grade?:string}};
+const EMPTY:Snapshot={stats:{},attendanceBreakdown:[]};
 
-export default function ParentReports() {
-  const { data: dashboard } = useApiData<any>('/portal/dashboard', { stats: {}, attendanceTrend: [] });
-  const stats = dashboard?.stats || {};
-  const [examResults, setExamResults] = useState<ExamNotification[]>([]);
-  const [loadingExams, setLoadingExams] = useState(true);
-
-  useEffect(() => {
+export default function ParentReports(){
+  const {data:dashboard,loading,error,refetch}=useApiData<Snapshot>('/portal/dashboard',EMPTY);
+  const stats=dashboard?.stats||{};
+  const breakdown=Array.isArray(dashboard?.attendanceBreakdown)?dashboard.attendanceBreakdown:[];
+  const recordedCount=breakdown.reduce((total,row)=>total+Math.max(0,Number(row.value)||0),0);
+  const hasAttendance=!loading&&!error&&recordedCount>0;
+  const [examResults,setExamResults]=useState<ExamNotification[]>([]);
+  const [loadingExams,setLoadingExams]=useState(true);
+  const [noticeError,setNoticeError]=useState('');
+  const [noticeTick,setNoticeTick]=useState(0);
+  useEffect(()=>{
+    let mounted=true;
+    setLoadingExams(true);setNoticeError('');
     api.get('/notify/inbox')
-      .then((res) => {
-        const rows = (res.data?.data || []).filter((n: { type?: string }) => n.type === 'exam_result');
-        setExamResults(rows.slice(0, 8));
+      .then(res=>{
+        if(!mounted)return;
+        if(!res.data?.success||!Array.isArray(res.data?.data))throw new Error('The result inbox was unavailable.');
+        setExamResults(res.data.data.filter((item:ExamNotification)=>item.type==='exam_result').slice(0,8));
       })
-      .catch(() => setExamResults([]))
-      .finally(() => setLoadingExams(false));
-  }, []);
-
-  return (
-    <DashboardLayout role="parent" title="AI Reports & Tracking">
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
-        <motion.div 
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="lg:col-span-2 glass-card p-8 bg-gradient-to-br from-slate-800/80 to-blue-900/40 relative overflow-hidden"
-        >
-          <div className="flex justify-between items-start relative z-10">
-            <div>
-              <h3 className="text-2xl font-bold text-white mb-2">Monthly AI Intelligence Report</h3>
-              <p className="text-blue-200">Live data only · no fabricated predictions</p>
-            </div>
-            <button className="bg-white/5 text-white/40 p-3 rounded-xl border border-white/10 flex items-center gap-2 cursor-not-allowed opacity-50" title="Coming soon">
-              <Download className="w-5 h-5" /> Export PDF
-            </button>
-          </div>
-
-          <div className="mt-8 relative z-10 bg-slate-900/40 backdrop-blur-sm p-6 rounded-2xl border border-slate-700/50">
-            <h4 className="text-lg font-semibold text-white flex items-center gap-2 mb-4">
-              <Target className="w-5 h-5 text-emerald-400" /> Academic Trajectory
-            </h4>
-            <p className="text-slate-300 leading-relaxed mb-6">
-              A monthly AI narrative is not shown until validated assessment, homework, and attendance history are available for the linked child records. Current live scope contains <strong className="text-cyan-300">{Number(stats.totalStudents || 0)}</strong> linked student record(s).
-            </p>
-            
-            <h4 className="text-lg font-semibold text-white flex items-center gap-2 mb-4">
-              <Briefcase className="w-5 h-5 text-amber-400" /> Recommendations
-            </h4>
-            <div className="rounded-xl border border-slate-700 bg-slate-900/40 p-4 text-sm text-slate-300">
-              No automated recommendation is displayed until it can be supported by live assessment evidence.
-            </div>
-          </div>
-        </motion.div>
-
-        <motion.div 
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.1 }}
-          className="glass-card p-6"
-        >
-          <h3 className="text-xl font-bold text-white mb-6 flex items-center gap-2">
-            <Calendar className="w-5 h-5 text-purple-400" /> Attendance Tracking
-          </h3>
-          
-          <div className="flex items-center justify-center mb-8 relative">
-            <div className="w-32 h-32 rounded-full border-[12px] border-emerald-500/20 flex items-center justify-center relative">
-              <div className="absolute inset-0 rounded-full border-[12px] border-emerald-500 border-l-transparent border-b-transparent transform rotate-45"></div>
-              <div className="text-center">
-                <span className="text-3xl font-bold text-white">{Number(stats.attPct || 0)}%</span>
-                <span className="block text-xs text-slate-400 mt-1">Today</span>
-              </div>
-            </div>
-          </div>
-
-          <div className="space-y-4">
-            <div className="flex justify-between items-center p-3 rounded-lg bg-emerald-500/10 border border-emerald-500/20">
-              <div className="flex items-center gap-2 text-emerald-400 font-medium">
-                <CheckSquare className="w-4 h-4" /> Present today
-              </div>
-              <span className="text-white font-bold">{Number(stats.presentCount || 0)}</span>
-            </div>
-            <div className="flex justify-between items-center p-3 rounded-lg bg-red-500/10 border border-red-500/20">
-              <div className="flex items-center gap-2 text-red-400 font-medium">
-                <XSquare className="w-4 h-4" /> Absent today
-              </div>
-              <span className="text-white font-bold">{Number(stats.absentCount || 0)}</span>
-            </div>
-            <div className="flex justify-between items-center p-3 rounded-lg bg-amber-500/10 border border-amber-500/20">
-              <div className="flex items-center gap-2 text-amber-400 font-medium">
-                <Calendar className="w-4 h-4" /> Leave today
-              </div>
-              <span className="text-white font-bold">{Number(stats.leaveCount || 0)}</span>
-            </div>
-          </div>
-        </motion.div>
-      </div>
-
-      <motion.div
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.15 }}
-        className="glass-card p-6 mb-8"
-      >
-        <h3 className="text-xl font-bold text-white mb-4 flex items-center gap-2">
-          <GraduationCap className="w-5 h-5 text-cyan-400" /> Online exam results
-        </h3>
-        {loadingExams && (
-          <div className="flex items-center gap-2 text-slate-400 text-sm py-4">
-            <Loader2 className="w-4 h-4 animate-spin" /> Loading results…
-          </div>
-        )}
-        {!loadingExams && examResults.length === 0 && (
-          <p className="text-sm text-slate-400 py-2">No online exam results yet. You will be notified when your child completes a published exam.</p>
-        )}
-        {!loadingExams && examResults.length > 0 && (
-          <div className="space-y-3">
-            {examResults.map((item) => (
-              <div key={item.id} className="rounded-xl border border-cyan-500/20 bg-cyan-500/5 p-4">
-                <div className="flex flex-wrap items-start justify-between gap-2">
-                  <div>
-                    <p className="font-semibold text-white">{item.title}</p>
-                    <p className="mt-1 text-sm text-slate-300">{item.message}</p>
-                  </div>
-                  {item.metadata?.grade && (
-                    <span className="rounded-full bg-cyan-500/20 px-3 py-1 text-xs font-bold text-cyan-300">
-                      {item.metadata.grade} · {item.metadata.pct}%
-                    </span>
-                  )}
-                </div>
-                {item.time && <p className="mt-2 text-xs text-slate-500">{item.time}</p>}
-              </div>
-            ))}
-          </div>
-        )}
-      </motion.div>
-    </DashboardLayout>
-  );
+      .catch((err:any)=>{if(mounted)setNoticeError(err?.response?.data?.message||err?.message||'School exam notices could not be loaded.');})
+      .finally(()=>{if(mounted)setLoadingExams(false)});
+    return()=>{mounted=false};
+  },[noticeTick]);
+  const schoolCount=!loading&&!error&&Number.isFinite(Number(stats.totalStudents))?String(stats.totalStudents):'—';
+  const attPercent=hasAttendance&&Number.isFinite(Number(stats.attPct))?`${stats.attPct}%`:'—';
+  return <DashboardLayout role="parent" title="School reports">
+    <PortalModuleHeading eyebrow="FAMILY LEARNING RECORD" title="Reports and updates" description="Your children's linked school information in a thoughtful, readable format. Only verified progress and saved attendance are displayed."
+      actions={<button type="button" onClick={()=>{refetch();setNoticeTick(t=>t+1)}} className="cw-module-secondary"><RefreshCw size={15}/> Refresh reports</button>}/>
+    <div className="mb-6"><PortalSupportNote>Automated academic predictions are not shown without sufficient approved assessment evidence. Missing attendance must never appear as a fabricated 0% result.</PortalSupportNote></div>
+    {error&&<div className="mb-5"><DataError message={error} onRetry={refetch}/></div>}
+    <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
+      {[
+        {label:'LINKED CHILDREN',value:schoolCount,icon:Users,note:'Your linked school accounts'},
+        {label:'ATTENDANCE RATE',value:attPercent,icon:CalendarCheck,note:hasAttendance?'From saved records':'Awaiting marked attendance'},
+        {label:'MARKED ENTRIES',value:hasAttendance?recordedCount:'—',icon:ClipboardCheck,note:'Verified recorded entries only'},
+      ].map(item=><article key={item.label} className="cw-metric"><div className="flex justify-between items-start gap-2"><span className="cw-metric-label">{item.label}</span><span className="cw-action-icon"><item.icon size={18}/></span></div><div className="cw-metric-value mt-2 tabular-nums">{loading?'…':item.value}</div><p className="cw-metric-note mt-1">{item.note}</p></article>)}
+    </div>
+    <div className="mt-6 grid grid-cols-1 gap-5 xl:grid-cols-[.85fr_1.15fr]">
+      <section className="cw-card"><PortalSubheading eyebrow="ACTUAL ATTENDANCE" title="School attendance" description="Only dates and statuses that have been marked by the school count here."/>
+        {loading?<div className="h-36 animate-pulse rounded-xl bg-[#f1f5f1]"/>:error?<DataEmpty title="Unable to show attendance" description="Please retry after the live school data is available."/>:!hasAttendance?<DataEmpty title="Attendance not available yet" description="Once the school saves attendance, your child's real recorded breakdown appears here."/>:
+        <div className="space-y-4">{breakdown.filter(row=>Number(row.value)>0).map((row,i)=>{
+          const pct=Math.round(Math.max(0,Number(row.value)||0)/recordedCount*100);
+          return <div key={`${row.name}-${i}`}><div className="flex items-center justify-between gap-3 text-[12px] font-semibold text-[#3b5c52]"><span>{row.name}</span><span className="tabular-nums">{row.value} · {pct}%</span></div><div className="mt-2 h-2 rounded-full overflow-hidden bg-[#e4f0ec]"><div className="h-full rounded-full bg-[var(--cw-accent)]" style={{width:`${pct}%`}}/></div></div>;
+        })}</div>}
+      </section>
+      <section className="cw-card"><PortalSubheading eyebrow="SCHOOL VERIFIED" title="Online examination notices" description="Results shared by the school for the children attached to your family record."/>
+        {loadingExams?<div className="space-y-3" role="status" aria-label="Loading exam results"><div className="h-20 animate-pulse rounded-xl bg-[#f1f4f1]"/><div className="h-20 animate-pulse rounded-xl bg-[#f1f4f1]"/></div>:
+        noticeError?<DataError message={noticeError} onRetry={()=>setNoticeTick(t=>t+1)}/>:
+        !examResults.length?<DataEmpty title="No examination notices yet" description="Approved online results will appear once the school issues them for your linked children."/>:
+        <div className="space-y-3">{examResults.map(item=><article key={item.id} className="rounded-[13px] border border-[#dce8e3] bg-[#fbfdfb] p-4"><div className="flex flex-wrap items-start gap-3 justify-between"><div className="min-w-0"><h3 className="text-[13px] font-bold text-[#2d4a43]">{item.title||'Exam result notice'}</h3>{item.message&&<p className="mt-2 text-[12px] leading-6 text-[#516c62]">{item.message}</p>}</div>{item.metadata?.grade&&<span className="rounded-full border border-[#d7e8e1] bg-[#e8f5f0] px-3 py-1.5 text-[11px] font-bold text-[#26736c]">{item.metadata.grade}{Number.isFinite(Number(item.metadata.pct))?` · ${item.metadata.pct}%`:''}</span>}</div>{item.time&&<p className="mt-3 text-[10px] text-[#60786e]">{item.time}</p>}</article>)}</div>}
+      </section>
+    </div>
+    <div className="mt-6 rounded-[15px] border border-[#dce8e3] bg-[#f6fbf9] p-4"><div className="flex items-start gap-3"><FileText size={19} className="mt-0.5 shrink-0 text-[#28766e]"/><p className="text-[12px] leading-6 text-[#4c6c61]">For detailed academic decisions or discrepancies in records, please contact the school. This report page does not invent grades, future performance, or recommendations.</p></div></div>
+  </DashboardLayout>;
 }

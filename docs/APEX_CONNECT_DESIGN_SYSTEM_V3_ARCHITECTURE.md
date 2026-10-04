@@ -117,3 +117,22 @@ Five workflow-critical screens now share `PortalModulePrimitives.tsx` (editorial
 - Manual authenticated screenshots and browser/keyboard/axe review of every state and dialog at 375/768/1024/1440px; a static colour token PASS cannot certify all nested runtime contrast.
 - P2 Parent Finance/Reports and Student Exams/Quiz/Homework, followed by high-density Admin Teachers, Announcements, setup and Teacher report-card workflows. Their route availability is tested but complete individual visual migration is not.
 - Detail flows with real exam fixtures and full mutation integration tests must be independently reviewed before declaring application-wide pixel-perfect/production-ready UI.
+
+## V3.3 — P2 family/student information hierarchy
+
+The second module wave migrates Parent Finance, Parent Reports, Student Exams, Student Quiz and Student Homework into role-accented semantic Connect module surfaces. No payment instructions, exam marks or assignments have been invented to fill visually empty cards.
+
+### Verified source findings and changes
+
+1. Parent Finance had a high-impact data-unwrapping bug: `useApiData` already extracts `response.data.data`, but the previous screen then read `feesData?.data` again, causing genuine household fee arrays to render as empty. It now consumes the actual array, differentiates loading/error/invalid-payload/valid-empty states and shows fee status/challan references without promising payment submission. The old visible upload form was disabled (`PAYMENT_SUBMISSION_ENABLED=false`) yet misleadingly presented; the screen is now an honest read-only ledger until school-verified payment instructions/submission are configured.
+2. Parent Reports no longer presents a decorative artificial attendance ring with `Number(stats.attPct || 0)` (which could imply 0% without saved marks), or ungrounded monthly AI forecast. The dashboard attendance breakdown controls data availability, and the `/notify/inbox` `exam_result` list has its own loading, retry and error state. No fake Export PDF button.
+3. Student Exams shows valid published rows through the existing `fetchAvailableOnlineExams` abstraction, does not invent `30 minutes` when duration is absent, and rejects unexpected API responses rather than displaying false zero papers. Source audit found no `/exams/online/available` route in the deployed backend examRoutes; a 404 is shown as an honest missing-service message instead of implying there are no tests. Implementing this integration requires a separately reviewed server-scoped published-exam route (never expose correct answers to students).
+4. Student Quiz accurately shows pending approved question-bank/class-scoped integration, a readable role-specific state and navigation to real exams, not sample questions or a teacher-only generation endpoint.
+5. Student Homework removed its empty hard-coded `ASSIGNMENTS` list, delayed simulated bot response and disabled-but-active-looking chat shell. Until there is a real class-scoped homework API, it clearly shows integration state and a verified adjacent school workflow.
+
+### Evidence and constraints
+
+- New source gate `scripts/check-connect-p2-integrity.mjs`: 11/11 PASS (source correctness assertions, not browser visual proof).
+- Public v3.2 Build ID before P2: `pSomSq5MQnpsmkDsEU9K5`; preserve this green candidate for rollback during promotion.
+- No school fee, exam, homework, child or parent database mutation in P2 visual work.
+- Still requires manual multi-breakpoint screenshots/keyboard focus tests of dynamic screens, and independent backend features for online exam publishing, approved quizzes and homework assignments before calling these full product integrations complete.

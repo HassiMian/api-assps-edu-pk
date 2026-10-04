@@ -1,222 +1,53 @@
 "use client";
 
 import DashboardLayout from '@/components/DashboardLayout';
-import { CreditCard, Upload, CheckCircle2, Clock, X, AlertCircle, ImageIcon } from 'lucide-react';
-import { useState, useRef } from 'react';
-import { useApiData } from '@/hooks/useApiData';
-import api from '@/utils/api';
+import {PortalModuleHeading, PortalSubheading, PortalSupportNote} from '@/components/PortalModulePrimitives';
+import {DataEmpty, DataError} from '@/components/PortalDashboardPrimitives';
+import {useApiData} from '@/hooks/useApiData';
+import {CheckCircle2, Clock3, CreditCard, RefreshCw, ShieldCheck, AlertCircle, ReceiptText} from 'lucide-react';
 
-const STATUS_STYLE: Record<string, string> = {
-  paid: 'text-emerald-400',
-  pending: 'text-amber-400',
-  unpaid: 'text-red-400',
-  partial: 'text-blue-400',
+type FeeRecord={id:number;month?:string;year?:string|number;challan_no?:string;amount?:number|string;balance_due?:number|string|null;status?:string;proof_status?:string;paid_date?:string};
+const PROOF_LABEL:Record<string,string>={pending:'Payment proof under review',approved:'Proof approved',rejected:'Proof rejected'};
+const numberAmount=(value:unknown)=>{
+  if(value===null||value===undefined||value==='')return 'Amount unavailable';
+  const n=Number(value);
+  return Number.isFinite(n)&&n>=0?`Rs ${new Intl.NumberFormat('en-PK',{maximumFractionDigits:2}).format(n)}`:'Amount unavailable';
 };
 
-const PROOF_LABEL: Record<string, string> = {
-  none: '',
-  pending: 'Proof under review',
-  approved: 'Approved',
-  rejected: 'Proof rejected',
-};
-
-const EMPTY_FEES: any[] = [];
-const PAYMENT_SUBMISSION_ENABLED = false;
-
-export default function ParentFinance() {
-  const [paymentMethod, setPaymentMethod] = useState<'jazzcash' | 'easypaisa' | 'bank'>('jazzcash');
-  const [selectedChallan, setSelectedChallan] = useState<any>(null);
-  const [proofImage, setProofImage] = useState<string | null>(null);
-  const [amount, setAmount] = useState('0');
-  const [uploading, setUploading] = useState(false);
-  const [alert, setAlert] = useState<{ type: 'success' | 'error'; msg: string } | null>(null);
-  const fileRef = useRef<HTMLInputElement>(null);
-
-  const { data: feesData, loading, refetch } = useApiData<any>('/fees', { data: EMPTY_FEES });
-  const fees = feesData?.data || EMPTY_FEES;
-  const unpaidFees = fees.filter((f: any) => f.status !== 'paid');
-
-  function showAlert(type: 'success' | 'error', msg: string) {
-    setAlert({ type, msg });
-    setTimeout(() => setAlert(null), 5000);
-  }
-
-  function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    if (file.size > 5 * 1024 * 1024) {
-      showAlert('error', 'Image too large. Max 5MB.');
-      return;
-    }
-    const reader = new FileReader();
-    reader.onload = () => setProofImage(reader.result as string);
-    reader.readAsDataURL(file);
-  }
-
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    if (!PAYMENT_SUBMISSION_ENABLED) {
-      showAlert('error', 'Online payment instructions are not configured yet. Please contact the school office.');
-      return;
-    }
-    if (!selectedChallan) { showAlert('error', 'Select a live fee month first.'); return; }
-    if (!proofImage) { showAlert('error', 'Please upload your payment screenshot.'); return; }
-    setUploading(true);
-    try {
-      await api.post(`/fees/${selectedChallan.id}/upload-proof`, {
-        proof_image: proofImage,
-        proof_amount: parseFloat(amount) || null,
-        proof_method: paymentMethod,
-      });
-      showAlert('success', 'Proof submitted. Admin will verify it shortly.');
-      setProofImage(null);
-      setSelectedChallan(null);
-      if (fileRef.current) fileRef.current.value = '';
-      refetch();
-    } catch (err: any) {
-      showAlert('error', err?.response?.data?.message || 'Upload failed. Try again.');
-    } finally {
-      setUploading(false);
-    }
-  }
-
-  return (
-    <DashboardLayout role="parent" title="Finances & Fee Payment">
-      {alert && (
-        <div className={`fixed top-6 right-6 z-50 px-5 py-3 rounded-xl text-sm font-semibold shadow-xl border flex items-center gap-2 ${alert.type === 'success' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30' : 'bg-red-500/10 text-red-400 border-red-500/30'}`}>
-          {alert.type === 'success' ? <CheckCircle2 className="w-4 h-4" /> : <AlertCircle className="w-4 h-4" />}
-          {alert.msg}
-        </div>
-      )}
-
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-        <div className="glass-card p-6">
-          <h3 className="text-xl font-semibold text-white mb-6">Submit Payment Proof</h3>
-          <form onSubmit={handleSubmit} className="space-y-5">
-            <div>
-              <label className="block text-sm font-medium text-slate-400 mb-2">Which month are you paying?</label>
-              <div className="space-y-2">
-                {unpaidFees.length === 0 && <p className="text-slate-500 text-sm">No live challans available right now.</p>}
-                {unpaidFees.map((f: any) => (
-                  <div
-                    key={f.id}
-                    onClick={() => setSelectedChallan(f)}
-                    className={`cursor-pointer p-3 rounded-xl border transition-all flex items-center justify-between ${selectedChallan?.id === f.id ? 'bg-blue-500/10 border-blue-500/50 text-blue-300' : 'bg-slate-800/30 border-slate-700 text-slate-400 hover:border-slate-600'}`}
-                  >
-                    <span className="font-medium">{f.month} {f.year} — Rs {Number(f.amount).toLocaleString()}</span>
-                    {f.proof_status === 'pending' && <span className="text-xs text-amber-400">Under Review</span>}
-                    {f.proof_status === 'rejected' && <span className="text-xs text-red-400">Proof Rejected</span>}
-                    {selectedChallan?.id === f.id && <CheckCircle2 className="w-4 h-4 text-blue-400" />}
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-slate-400 mb-2">Payment Method</label>
-              <div className="grid grid-cols-3 gap-2">
-                {[
-                  { id: 'jazzcash', label: 'JazzCash', color: 'text-red-400 border-red-500/30 bg-red-500/10' },
-                  { id: 'easypaisa', label: 'EasyPaisa', color: 'text-emerald-400 border-emerald-500/30 bg-emerald-500/10' },
-                  { id: 'bank', label: 'Bank Transfer', color: 'text-blue-400 border-blue-500/30 bg-blue-500/10' },
-                ].map(m => (
-                  <div
-                    key={m.id}
-                    onClick={() => setPaymentMethod(m.id as any)}
-                    className={`cursor-pointer rounded-xl border p-3 text-center text-sm font-bold transition-all ${paymentMethod === m.id ? m.color + ' border-[2px]' : 'bg-slate-800/30 border-slate-700 text-slate-400 hover:bg-slate-800'}`}
-                  >
-                    {m.label}
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            <div className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/30 text-sm">
-              <p className="font-semibold text-amber-300">Online payment instructions are not configured yet.</p>
-              <p className="mt-1 text-slate-300">Do not send money to any number shown in an old screenshot or cached page. Please contact the school office for verified payment instructions.</p>
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-slate-400 mb-2">Amount Paid (Rs)</label>
-              <input
-                type="number"
-                value={amount}
-                onChange={e => setAmount(e.target.value)}
-                className="w-full bg-slate-900 border border-slate-700 text-white rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono text-lg"
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-slate-400 mb-2">Upload Screenshot (Proof)</label>
-              {proofImage ? (
-                <div className="relative rounded-xl overflow-hidden border border-blue-500/40">
-                  <img src={proofImage} alt="Proof" className="w-full max-h-48 object-contain bg-slate-900" />
-                  <button type="button" onClick={() => { setProofImage(null); if (fileRef.current) fileRef.current.value = ''; }}
-                    className="absolute top-2 right-2 p-1 bg-black/60 rounded-full text-white hover:bg-red-500/80 transition-colors">
-                    <X className="w-4 h-4" />
-                  </button>
-                </div>
-              ) : (
-                <label className="block border-2 border-dashed border-slate-700 rounded-xl p-8 flex flex-col items-center justify-center text-center hover:border-blue-500/50 transition-colors cursor-pointer bg-slate-800/20">
-                  <ImageIcon className="w-8 h-8 text-blue-400 mb-2" />
-                  <p className="text-sm font-medium text-white">Click to select screenshot</p>
-                  <p className="text-xs text-slate-500 mt-1">JPG, PNG — max 5MB</p>
-                  <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={handleFileChange} />
-                </label>
-              )}
-            </div>
-
-            <button
-              type="submit"
-              disabled={!PAYMENT_SUBMISSION_ENABLED || uploading || unpaidFees.length === 0}
-              className="w-full bg-blue-600 hover:bg-blue-500 text-white font-semibold py-3.5 rounded-xl transition-transform active:scale-95 disabled:opacity-50 flex items-center justify-center gap-2 shadow-lg shadow-blue-500/20"
-            >
-              {uploading
-                ? <><span className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" /> Uploading...</>
-                : PAYMENT_SUBMISSION_ENABLED
-                  ? <><Upload className="w-5 h-5" /> Submit for Approval</>
-                  : <>Online payment setup pending</>}
-            </button>
-          </form>
-        </div>
-
-        <div className="glass-card flex flex-col">
-          <div className="p-6 border-b border-slate-700/50">
-            <h3 className="text-xl font-semibold text-white">Fee History</h3>
-          </div>
-          <div className="flex-1 p-6 space-y-3">
-            {loading && <p className="text-slate-500 text-sm">Loading live fee data...</p>}
-            {!loading && fees.length === 0 && (
-              <div className="rounded-2xl border border-dashed border-slate-700/70 bg-slate-900/30 p-6 text-center">
-                <p className="text-white font-semibold mb-1">No fee history available</p>
-                <p className="text-slate-400 text-sm">Live challans will appear here once the backend sends them.</p>
-              </div>
-            )}
-            {fees.map((f: any, idx: number) => (
-              <div key={f.id || idx} className="flex justify-between items-center p-4 rounded-xl bg-slate-800/30 border border-slate-700/50">
-                <div className="flex items-center gap-4">
-                  <div className={`p-3 rounded-lg ${f.status === 'paid' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-amber-500/20 text-amber-400'}`}>
-                    {f.status === 'paid' ? <CheckCircle2 className="w-5 h-5" /> : <Clock className="w-5 h-5" />}
-                  </div>
-                  <div>
-                    <h4 className="text-white font-medium">{f.month} {f.year}</h4>
-                    {f.paid_date && <p className="text-slate-400 text-xs mt-0.5">{new Date(f.paid_date).toLocaleDateString('en-GB')}</p>}
-                    {f.proof_status && f.proof_status !== 'none' && (
-                      <p className="text-xs mt-0.5 font-medium">{PROOF_LABEL[f.proof_status]}</p>
-                    )}
-                  </div>
-                </div>
-                <div className="text-right">
-                  <p className="text-white font-semibold font-mono">Rs {Number(f.amount).toLocaleString()}</p>
-                  <span className={`text-[10px] font-bold uppercase tracking-wider ${STATUS_STYLE[f.status] || 'text-slate-400'}`}>
-                    {f.status}
-                  </span>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
-    </DashboardLayout>
-  );
+export default function ParentFinance(){
+  const {data:feePayload,loading,error,refetch}=useApiData<unknown>('/fees',[]);
+  const validShape=Array.isArray(feePayload);
+  const fees:FeeRecord[]=validShape?feePayload as FeeRecord[]:[];
+  const unpaid=fees.filter(f=>String(f.status||'').toLowerCase()!=='paid');
+  const inReview=fees.filter(f=>String(f.proof_status||'').toLowerCase()==='pending').length;
+  return <DashboardLayout role="parent" title="Family finances">
+    <PortalModuleHeading eyebrow="FAMILY FINANCIAL RECORD" title="Fee overview" description="Your household's linked school challans, review status and payment history—shown directly from verified records."
+      actions={<button type="button" onClick={refetch} className="cw-module-secondary"><RefreshCw size={15}/> Refresh records</button>}/>
+    <div className="mb-6"><PortalSupportNote>In-app payment instructions and proof submission are not configured yet. Please obtain the school's verified payment details directly from the school office. This page does not accept or confirm a transfer.</PortalSupportNote></div>
+    {error&&<div className="mb-5"><DataError message={error} onRetry={refetch}/></div>}
+    {!loading&&!error&&!validShape&&<div className="mb-5"><DataError message="Fee records returned an unexpected response; no balances will be inferred." onRetry={refetch}/></div>}
+    <section className="grid grid-cols-2 gap-3 md:grid-cols-3" aria-label="Household fee summary">
+      {[
+        {label:'FEE RECORDS',value:loading||error||!validShape?'—':fees.length,icon:ReceiptText},
+        {label:'AWAITING PAYMENT',value:loading||error||!validShape?'—':unpaid.length,icon:Clock3},
+        {label:'PROOFS UNDER REVIEW',value:loading||error||!validShape?'—':inReview,icon:ShieldCheck},
+      ].map(item=><article key={item.label} className="cw-metric"><div className="flex items-start justify-between gap-2"><span className="cw-metric-label">{item.label}</span><span className="cw-action-icon"><item.icon size={18}/></span></div><div className="cw-metric-value mt-3 tabular-nums">{item.value}</div><p className="cw-metric-note mt-1">Only this linked household</p></article>)}
+    </section>
+    <section className="cw-card mt-6" aria-label="Household challans">
+      <PortalSubheading eyebrow="CHALLAN HISTORY" title="School fee records" description="Use the official challan reference when discussing a payment with the school administration."/>
+      {loading?<div className="space-y-3" aria-label="Loading fee records" role="status">{[1,2,3].map(x=><div key={x} className="h-[95px] animate-pulse rounded-xl bg-[#f1f4ef]"/>)}</div>:
+      error||!validShape?<div className="cw-empty"><AlertCircle size={23} color="var(--cw-warning)"/><strong>Records temporarily unavailable</strong><p>Please retry. A failed server response must never be presented as an empty ledger.</p></div>:
+      !fees.length?<DataEmpty title="No linked fee records yet" description="Verified challans will appear here once the school associates them with your family account."/>:
+      <div className="space-y-3">{fees.map((fee,index)=>{
+        const isPaid=String(fee.status||'').toLowerCase()==='paid';
+        const pendingReview=String(fee.proof_status||'').toLowerCase()==='pending';
+        const rejected=String(fee.proof_status||'').toLowerCase()==='rejected';
+        return <article key={fee.id||`fee-${index}`} className="flex flex-col gap-3 rounded-[14px] border border-[#e4e9e2] bg-[#fcfdfa] p-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex min-w-0 items-start gap-3"><span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl" style={{background:isPaid?'#e9f4ec':'#f8efe3',color:isPaid?'#27694b':'#986326'}}>{isPaid?<CheckCircle2 size={19}/>:<CreditCard size={19}/>}</span><div className="min-w-0"><h3 className="text-[13px] font-bold text-[#304438]">{fee.month||'School fee'} {fee.year||''}</h3><p className="mt-1 break-all text-[11px] text-[#596d5f]">Challan: {fee.challan_no||'Reference unavailable'}</p>{fee.proof_status&&PROOF_LABEL[fee.proof_status]&&<p className={`mt-2 text-[11px] font-semibold ${rejected?'text-[#963d39]':pendingReview?'text-[#875725]':'text-[#286e4b]'}`}>{PROOF_LABEL[fee.proof_status]}</p>}</div></div>
+          <div className="text-left sm:text-right"><strong className="block font-serif text-[19px] text-[#293b30]">{numberAmount(fee.amount)}</strong><span className="mt-1 inline-flex rounded-full px-2.5 py-1 text-[10px] font-extrabold uppercase tracking-wide" style={{background:isPaid?'#e9f4ec':'#fff2e2',color:isPaid?'#246544':'#885727'}}>{isPaid?'Paid':fee.status||'Payment status pending'}</span>{fee.paid_date&&<p className="mt-2 text-[10px] text-[#697d6f]">Recorded: {new Date(fee.paid_date).toLocaleDateString('en-GB')}</p>}</div>
+        </article>;
+      })}<p className="pt-1 text-[11px] leading-5 text-[#5a6d60]">Amounts above are the recorded challan amounts. For partial payments, confirm the outstanding balance with the school office.</p></div>}
+    </section>
+    <div className="mt-6 rounded-[16px] border border-[#d8e7e2] bg-[#f5fbf9] p-5"><div className="flex items-start gap-3"><ShieldCheck size={20} className="mt-0.5 shrink-0 text-[#28746d]"/><div><strong className="text-[13px] text-[#2f5750]">Your family record stays private</strong><p className="mt-1 text-[12px] leading-6 text-[#506d65]">Financial information is requested through your authenticated household session. The page does not ask you to upload sensitive payment screenshots until the school activates its verified submission workflow.</p></div></div></div>
+  </DashboardLayout>;
 }

@@ -112,8 +112,19 @@ export async function fetchOnlineExam(examId: string | number) {
 }
 
 export async function fetchAvailableOnlineExams() {
-  const res = await api.get('/exams/online/available')
-  return { exams: res.data?.data || [], meta: res.data?.meta || {} }
+  let res
+  try {
+    res = await api.get('/exams/online/available')
+  } catch (err: any) {
+    if (err?.response?.status === 404) {
+      throw new Error('Online exam publishing is not yet connected to this student portal.')
+    }
+    throw err
+  }
+  if (!res.data?.success || !Array.isArray(res.data?.data)) {
+    throw new Error(res.data?.message || 'The published exam list is temporarily unavailable.')
+  }
+  return { exams: res.data.data, meta: res.data?.meta || {} }
 }
 
 export async function fetchOnlineExamList() {
