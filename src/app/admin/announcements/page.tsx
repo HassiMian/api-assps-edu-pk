@@ -1,6 +1,7 @@
 "use client";
 
 import DashboardLayout from '@/components/DashboardLayout';
+import {PortalModuleHeading} from '@/components/PortalModulePrimitives';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useState, useEffect } from 'react';
 import api from '@/utils/api';
@@ -228,14 +229,15 @@ export default function AnnouncementsManagement() {
       setLoading(true);
       setError(null);
       const res = await api.get('/admin/notices');
-      if (res.data.success) {
-        const rows = Array.isArray(res.data.data) ? res.data.data : [];
-        setAnnouncements(rows.map((row: Record<string, unknown>) => mapNotice(row)));
+      if (res.data?.success && Array.isArray(res.data?.data)) {
+        setAnnouncements(res.data.data.map((row: Record<string, unknown>) => mapNotice(row)));
       } else {
-        setError(res.data.message || 'Notices API returned an error.');
+        setAnnouncements([]);
+        setError(res.data?.message || 'Notices API returned an unexpected response.');
       }
     } catch (err) {
       console.error('Notices load error:', err);
+      setAnnouncements([]);
       setError('Notices could not load from the SaaS backend.');
     } finally {
       setLoading(false);
@@ -333,7 +335,7 @@ export default function AnnouncementsManagement() {
       setError(null);
       const res = await api.delete(`/admin/notices/${id}`);
       if (!res.data.success) throw new Error(res.data.message || 'Notice delete failed.');
-      setAnnouncements(prev => prev.filter(a => a.id !== id));
+      await fetchAnnouncements();
     } catch (err) {
       console.error('Notice delete error:', err);
       setError('Notice delete nahi hua. Backend ne delete confirm nahi kiya.');
@@ -381,6 +383,8 @@ export default function AnnouncementsManagement() {
 
   return (
     <DashboardLayout role="admin" title="Notices">
+      <PortalModuleHeading eyebrow="SCHOOL COMMUNICATION" title="Announcements and notices" description="Publish and review saved bilingual school notices. Failed requests are distinct from a genuinely empty bulletin."/>
+      {error&&<button type="button" onClick={fetchAnnouncements} className="cw-module-secondary mb-4">Retry notice records</button>}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
         {[
           { label: 'Total', value: announcements.length, icon: Megaphone, color: 'from-blue-500 to-cyan-400' },
@@ -441,14 +445,15 @@ export default function AnnouncementsManagement() {
         </AnimatePresence>
       </div>
 
-      {sortedAnnouncements.length === 0 && !loading && <div className="text-center py-16 text-slate-500"><Megaphone className="w-12 h-12 mx-auto mb-3 opacity-30" /><p>No notices found</p></div>}
+      {sortedAnnouncements.length === 0 && !loading && !error && <div className="text-center py-16 text-slate-500"><Megaphone className="w-12 h-12 mx-auto mb-3 opacity-30" /><p>No notices found</p></div>}
 
       <AnimatePresence>
         {showModal && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-            <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="glass-card w-full max-w-4xl p-6 relative border-slate-600/50 max-h-[90vh] overflow-y-auto">
+          <div className="cw-modal-backdrop">
+            <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="cw-modal-panel glass-card w-full max-w-4xl relative" role="dialog" aria-modal="true" aria-label={editing ? 'Edit notice' : 'Issue notice'}>
               <button onClick={() => setShowModal(false)} className="absolute top-4 right-4 text-slate-400 hover:text-white"><X className="w-5 h-5" /></button>
               <h3 className="text-xl font-bold text-white mb-6">{editing ? 'Edit Notice' : 'Issue Notice'}</h3>
+              {error&&<p role="alert" className="cw-error mb-4">{error}</p>}
 
               <div className="space-y-4">
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -558,8 +563,8 @@ export default function AnnouncementsManagement() {
 
       <AnimatePresence>
         {deleteId && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-            <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="glass-card w-full max-w-sm p-6 relative border-red-500/30">
+          <div className="cw-modal-backdrop">
+            <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="cw-modal-panel glass-card w-full max-w-sm relative" role="alertdialog" aria-modal="true" aria-label="Confirm notice deletion">
               <div className="w-12 h-12 rounded-full bg-red-500/10 flex items-center justify-center mx-auto mb-4"><Trash2 className="w-6 h-6 text-red-400" /></div>
               <h3 className="text-lg font-bold text-white text-center mb-2">Delete Notice?</h3>
               <p className="text-slate-400 text-sm text-center mb-6">This will remove the notice from all portals.</p>

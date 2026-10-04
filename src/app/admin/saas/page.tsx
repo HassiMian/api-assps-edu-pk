@@ -1,6 +1,7 @@
 "use client";
 
 import DashboardLayout from '@/components/DashboardLayout';
+import {PortalModuleHeading,PortalSupportNote} from '@/components/PortalModulePrimitives';
 import { motion } from 'framer-motion';
 import { Server, Settings, RefreshCw, BrainCircuit, FileText, MapPin, BarChart3, Megaphone, BookOpen, MessageSquare, GraduationCap, Building, Upload, Save, ImageIcon, ClipboardCheck, CheckCircle2, XCircle, Loader2 } from 'lucide-react';
 import { useState, useCallback, useEffect, useRef } from 'react';
@@ -37,22 +38,13 @@ type DemoRequest = {
 
 export default function AdminSaaSControl() {
   const { user } = useAuth();
-  const [modules, setModules] = useState([
-    { id: 'paper-gen', name: 'Paper Studio', enabled: true },
-    { id: 'quiz-engine', name: 'Quiz Engine', enabled: true },
-    { id: 'attendance', name: 'Presence Matrix', enabled: true },
-    { id: 'analytics', name: 'Intelligence Board', enabled: false },
-    { id: 'announcements', name: 'Alert Center', enabled: true },
-    { id: 'homework', name: 'Homework Assistant', enabled: true },
-    { id: 'messaging', name: 'Comms Hub', enabled: true },
-    { id: 'admissions', name: 'Admissions Control', enabled: false },
-  ]);
-
-  const toggleModule = (id: string) => {
-    setModules(prev => prev.map(m => m.id === id ? { ...m, enabled: !m.enabled } : m));
-  };
-
-  const activeCount = modules.filter(m => m.enabled).length;
+  // These are informational catalog entries. A visual switch cannot grant or revoke server permissions.
+  const moduleCatalog = [
+    {id:'paper-gen',name:'Paper Studio'}, {id:'quiz-engine',name:'Quiz Engine'},
+    {id:'attendance',name:'Presence Matrix'}, {id:'analytics',name:'Intelligence Board'},
+    {id:'announcements',name:'Alert Center'}, {id:'homework',name:'Homework Assistant'},
+    {id:'messaging',name:'Comms Hub'}, {id:'admissions',name:'Admissions Control'},
+  ];
   const [testStatus, setTestStatus] = useState<'idle' | 'testing' | 'ok' | 'fail'>('idle');
   const [schoolName, setSchoolName] = useState('Al Siddique Scholars Public School');
   const [schoolCode, setSchoolCode] = useState<string | null>(null);
@@ -65,6 +57,9 @@ export default function AdminSaaSControl() {
   const loginBgInputRef = useRef<HTMLInputElement>(null);
   const [saving, setSaving] = useState(false);
   const [success, setSuccess] = useState(false);
+  const [settingsError,setSettingsError] = useState('');
+  const [demoError,setDemoError] = useState('');
+  const [connectionCheckedAt,setConnectionCheckedAt] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [demoRequests, setDemoRequests] = useState<DemoRequest[]>([]);
   const [demoLoading, setDemoLoading] = useState(false);
@@ -74,10 +69,11 @@ export default function AdminSaaSControl() {
     setDemoLoading(true);
     try {
       const res = await api.get('/demo-requests?status=all');
-      setDemoRequests(res.data?.data || []);
+      if(!res.data?.success || !Array.isArray(res.data?.data))throw new Error(res.data?.message || 'Demo list is not available.');
+      setDemoRequests(res.data.data);setDemoError('');
     } catch (error) {
       console.error('Failed to load demo requests:', error);
-      setDemoRequests([]);
+      setDemoRequests([]);setDemoError('Demo requests could not be verified. Retry instead of interpreting this as zero requests.');
     } finally {
       setDemoLoading(false);
     }
@@ -90,50 +86,46 @@ export default function AdminSaaSControl() {
   const updateDemoRequest = async (id: number, status: DemoRequest['status']) => {
     setDemoAction(`${id}_${status}`);
     try {
-      await api.patch(`/demo-requests/${id}/status`, { status });
+      const response=await api.patch(`/demo-requests/${id}/status`, { status });
+      if(!response.data?.success)throw new Error(response.data?.message || 'Review status not confirmed.');
       await loadDemoRequests();
     } catch (error) {
       console.error('Failed to update demo request:', error);
-      alert('Failed to update demo request. Please try again.');
+      setDemoError('Request update was not confirmed. Please retry.');
     } finally {
       setDemoAction(null);
     }
   };
 
   useEffect(() => {
-    const publicParams = user?.school_code
-      ? { school_code: user.school_code }
-      : user?.school_id
-        ? { school_id: user.school_id }
-        : undefined;
-
-    api.get('/settings/public', { params: publicParams })
-      .then((res) => {
-        const data = res.data?.data || {};
-        if (data.school_name) setSchoolName(data.school_name);
-        if (data.school_code) setSchoolCode(data.school_code);
-        if (data.school_logo) setSchoolLogo(resolveAssetUrl(data.school_logo));
-        if (data.branding_config) {
-            setPrimaryColor(data.branding_config.primaryColor || '#C8991A');
-            setTypography(data.branding_config.typography || 'inter');
-            setDarkMode(data.branding_config.darkMode ?? true);
-            setGlassEffect(data.branding_config.glassEffect ?? true);
-            setLoginBackground(data.branding_config.loginBackground || null);
-        }
+    let active=true;
+    api.get('/settings')
+      .then(res=>{
+        if(!active)return;
+        if(!res.data?.success||!res.data?.data)throw new Error('Authenticated settings were not returned.');
+        const data=res.data.data;
+        if(data.school_name)setSchoolName(data.school_name);
+        if(data.school_code)setSchoolCode(data.school_code);
+        setSchoolLogo(data.school_logo?resolveAssetUrl(data.school_logo):null);
+        const config=data.branding_config||{};
+        setPrimaryColor(config.primaryColor||'#C8991A');setTypography(config.typography||'inter');
+        setDarkMode(config.darkMode??true);setGlassEffect(config.glassEffect??true);
+        setLoginBackground(config.loginBackground||null);setSettingsError('');
       })
-      .catch(() => {});
-  }, [user?.school_code, user?.school_id]);
+      .catch((err:any)=>{if(active)setSettingsError(err?.response?.data?.message||err?.message||'Settings could not be loaded. Please reload before editing.')});
+    return()=>{active=false};
+  }, [user?.school_id]);
 
   const testConnection = useCallback(async () => {
-    setTestStatus('testing');
+    setTestStatus('testing');setConnectionCheckedAt('');
     try {
-      await api.get('/health'.replace('/api', ''));
+      const res=await api.get('/settings');
+      if(!res.data?.success)throw new Error('Authenticated backend did not confirm connectivity.');
       setTestStatus('ok');
     } catch {
-      try { await api.get('/students?limit=1'); setTestStatus('ok'); }
-      catch { setTestStatus('fail'); }
+      setTestStatus('fail');
     }
-    setTimeout(() => setTestStatus('idle'), 4000);
+    setConnectionCheckedAt(new Date().toLocaleTimeString('en-PK'));
   }, []);
 
   const handleLogoSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -158,26 +150,28 @@ export default function AdminSaaSControl() {
   };
 
   const handleSaveBranding = async () => {
-    setSaving(true);
-    setSuccess(false);
+    if(settingsError){return;}
+    setSaving(true);setSuccess(false);
     try {
-      await api.patch('/settings/logo', {
-        school_logo: schoolLogo,
-        school_name: schoolName,
-        school_code: schoolCode,
-        branding_config: { primaryColor, typography, darkMode, glassEffect, loginBackground }
+      const response=await api.put('/settings',{
+        school_logo:schoolLogo,school_name:schoolName,
+        branding_config:{primaryColor,typography,darkMode,glassEffect,loginBackground}
       });
-      setSuccess(true);
-      setTimeout(() => setSuccess(false), 3000);
-    } catch (error) {
-      console.error('Failed to save settings:', error);
-      alert('Failed to save branding. Please try again.');
-    }
-    setSaving(false);
+      if(!response.data?.success)throw new Error(response.data?.message||'Settings were not confirmed by the server.');
+      const saved=response.data.data||{};
+      const config=saved.branding_config||{};
+      if(String(saved.school_name||'')!==schoolName || String(config.primaryColor||'').toLowerCase()!==primaryColor.toLowerCase())throw new Error('Saved branding did not match the submitted values.');
+      if(saved.school_logo)setSchoolLogo(resolveAssetUrl(saved.school_logo));
+      setSuccess(true);setSettingsError('');
+    } catch (err:any) {
+      setSettingsError(err?.response?.data?.message||err?.message||'Branding was not verified as saved.');
+    } finally {setSaving(false)}
   };
 
   return (
     <DashboardLayout role="admin" title="SaaS Control Center">
+      <PortalModuleHeading eyebrow="SCHOOL CONFIGURATION" title="Identity and settings" description="Manage the authenticated school's brand and review gateway requests. Only backend-confirmed settings are marked as saved."/>
+      {settingsError&&<p className="cw-error mb-5" role="alert">{settingsError}</p>}
       <motion.div 
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
@@ -291,7 +285,7 @@ export default function AdminSaaSControl() {
               </div>
               <button 
                 onClick={handleSaveBranding}
-                disabled={saving}
+                disabled={saving||!!settingsError}
                 className="bg-gradient-to-r from-amber-500 to-yellow-500 text-slate-950 font-bold py-2.5 px-6 rounded-xl transition-all active:scale-95 disabled:opacity-50 flex items-center gap-2 shadow-lg shadow-amber-500/20"
               >
                 {saving ? (
@@ -338,12 +332,13 @@ export default function AdminSaaSControl() {
           </button>
         </div>
 
+        {demoError&&<div className="cw-error mb-4" role="alert">{demoError}</div>}
         {demoLoading && demoRequests.length === 0 ? (
           <div className="text-slate-400 flex items-center gap-2">
             <Loader2 className="w-4 h-4 animate-spin" />
             Loading demo requests...
           </div>
-        ) : demoRequests.length === 0 ? (
+        ) : demoError ? null : demoRequests.length === 0 ? (
           <div className="bg-slate-900/40 border border-slate-700/50 rounded-2xl p-5 text-slate-400">
             No demo requests yet.
           </div>
@@ -421,17 +416,17 @@ export default function AdminSaaSControl() {
             </div>
             <div className="flex justify-between items-center mb-2">
               <span className="text-slate-400">Latency:</span>
-              <span className="text-emerald-400">24ms</span>
+              <span className="text-slate-300">Not measured</span>
             </div>
             <div className="flex justify-between items-center">
               <span className="text-slate-400">Status:</span>
-              <span className="flex items-center gap-2 text-emerald-400">
-                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-                Connected
+              <span className="flex items-center gap-2 text-slate-300">
+                {testStatus==='ok'?'Verified responsive':testStatus==='fail'?'Connection failed':testStatus==='testing'?'Checking…':'Not tested'}
               </span>
             </div>
           </div>
           
+          {connectionCheckedAt&&<p className="mt-2 text-[11px] text-slate-400">Last checked: {connectionCheckedAt}</p>}
           <button onClick={testConnection} disabled={testStatus === 'testing'} className={`w-full mt-4 py-2 rounded-xl transition-colors flex items-center justify-center gap-2 ${testStatus === 'ok' ? 'bg-emerald-500/20 text-emerald-400' : testStatus === 'fail' ? 'bg-red-500/20 text-red-400' : 'bg-slate-800 hover:bg-slate-700 text-slate-300'}`}>
             <RefreshCw className={`w-4 h-4 ${testStatus === 'testing' ? 'animate-spin' : ''}`} />
             {testStatus === 'testing' ? 'Testing…' : testStatus === 'ok' ? '✓ Backend Responding' : testStatus === 'fail' ? '✗ Connection Failed' : 'Test Connection'}
@@ -450,36 +445,17 @@ export default function AdminSaaSControl() {
             </div>
             <div>
               <h3 className="text-xl font-bold text-white">Module Management</h3>
-              <p className="text-slate-400 text-sm">{activeCount} of {modules.length} modules active</p>
+              <p className="text-slate-400 text-sm">Catalog only · activation must be enforced by the backend</p>
             </div>
           </div>
 
           <div className="space-y-2">
-            {modules.map(module => {
-              const Icon = moduleIcons[module.id] || Settings;
-              return (
-                <div key={module.id} className="flex items-center justify-between p-3 bg-slate-800/30 rounded-xl border border-slate-700/50">
-                  <div className="flex items-center gap-3">
-                    <div className={`p-2 rounded-lg ${module.enabled ? 'bg-slate-800/70 text-emerald-400 border border-slate-700/50' : 'bg-slate-700/50 text-slate-500'}`}>
-                      <Icon className="w-4 h-4" />
-                    </div>
-                    <div>
-                      <span className={`text-sm font-medium block ${module.enabled ? 'text-white' : 'text-slate-500'}`}>{module.name}</span>
-                      <span className={`text-xs ${module.enabled ? 'text-emerald-400' : 'text-slate-600'}`}>{module.enabled ? 'Active' : 'Disabled'}</span>
-                    </div>
-                  </div>
-                  <button 
-                    onClick={() => toggleModule(module.id)}
-                    className={`relative w-12 h-6 rounded-full transition-colors duration-200 ${
-                      module.enabled ? 'bg-emerald-500' : 'bg-slate-600'
-                    }`}
-                  >
-                    <span className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform duration-200 ${
-                      module.enabled ? 'translate-x-6' : 'translate-x-0'
-                    }`}></span>
-                  </button>
-                </div>
-              );
+            {moduleCatalog.map(module => {
+              const Icon=moduleIcons[module.id]||Settings;
+              return <div key={module.id} className="flex items-center justify-between p-3 rounded-xl border border-[#e5e9e2] bg-[#fcfdfb]">
+                <div className="flex items-center gap-3"><span className="cw-action-icon"><Icon size={17}/></span><span className="text-[12px] font-semibold text-[#355344]">{module.name}</span></div>
+                <span className="text-[10px] font-bold text-[#5c7061]">Configuration via school permissions</span>
+              </div>;
             })}
           </div>
         </motion.div>

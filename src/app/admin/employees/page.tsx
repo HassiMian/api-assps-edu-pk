@@ -1,6 +1,7 @@
 "use client";
 
 import DashboardLayout from '@/components/DashboardLayout';
+import {PortalModuleHeading} from '@/components/PortalModulePrimitives';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useState, useEffect } from 'react';
 import api from '@/utils/api';
@@ -42,7 +43,7 @@ export default function EmployeeManagement() {
       setLoading(true);
       setError(null);
       const res = await api.get('/employees');
-      if (res.data.success) {
+      if (res.data?.success && Array.isArray(res.data?.data)) {
         setEmployees(res.data.data.map((e: any) => ({
           id: String(e.id),
           name: e.name || '',
@@ -125,7 +126,7 @@ export default function EmployeeManagement() {
     try {
       setError(null);
       const res = await api.delete(`/employees/${id}`);
-      if (res.data?.success === false) {
+      if (res.data?.success !== true) {
         setError(res.data.message || "Employee delete failed on backend.");
       } else {
         await fetchEmployees();
@@ -157,6 +158,7 @@ export default function EmployeeManagement() {
 
   return (
     <DashboardLayout role="admin" title="Employee Management">
+      <PortalModuleHeading eyebrow="HUMAN RESOURCES" title="School employees" description="Review verified staff records and manage employment details. Changes are reflected only after the SaaS backend confirms them."/>
       {/* Stats Bar */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
         {[
@@ -204,13 +206,13 @@ export default function EmployeeManagement() {
               placeholder="Search employees..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              className="w-full bg-slate-800/50 border border-slate-700 rounded-xl pl-10 pr-4 py-2.5 text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 placeholder-slate-500"
+              className="cw-field w-full pl-10"
             />
           </div>
           <select
             value={filterStatus}
             onChange={(e) => setFilterStatus(e.target.value)}
-            className="bg-slate-800/50 border border-slate-700 rounded-xl px-4 py-2.5 text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="cw-field"
           >
             <option value="all">All Status</option>
             <option value="active">Active</option>
@@ -219,7 +221,7 @@ export default function EmployeeManagement() {
           </select>
         </div>
         <div className="flex gap-3">
-          <button className="flex items-center gap-2 px-4 py-2.5 rounded-xl border border-slate-700 text-slate-500 text-sm cursor-not-allowed opacity-50" title="Coming soon">
+          <button type="button" disabled aria-disabled="true" className="flex items-center gap-2 px-4 py-2.5 rounded-xl border border-slate-700 text-slate-500 text-sm cursor-not-allowed opacity-50" title="Export has not been implemented">
             <Download className="w-4 h-4" /> Export
           </button>
           <motion.button
@@ -245,7 +247,7 @@ export default function EmployeeManagement() {
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full text-sm">
+            <table className="cw-data-table">
               <thead>
                 <tr className="border-b border-slate-700/50 text-slate-400 text-left">
                   <th className="p-4 font-medium">Employee</th>
@@ -315,12 +317,12 @@ export default function EmployeeManagement() {
       {/* Add/Edit Modal */}
       <AnimatePresence>
         {showModal && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <div className="cw-modal-backdrop">
             <motion.div
               initial={{ opacity: 0, scale: 0.95, y: 20 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95, y: 20 }}
-              className="glass-card w-full max-w-2xl p-6 relative border-slate-600/50"
+              className="cw-modal-panel glass-card w-full max-w-2xl relative" role="dialog" aria-modal="true" aria-label={editingEmployee ? 'Edit employee' : 'Add employee'}
             >
               <button onClick={() => setShowModal(false)} className="absolute top-4 right-4 text-slate-400 hover:text-white">
                 <X className="w-5 h-5" />
@@ -328,6 +330,7 @@ export default function EmployeeManagement() {
               <h3 className="text-xl font-bold text-white mb-6">
                 {editingEmployee ? 'Edit Employee' : 'Add New Employee'}
               </h3>
+              {error&&<p role="alert" className="cw-error mb-4">{error}</p>}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm text-slate-400 mb-1">Full Name</label>
@@ -425,18 +428,19 @@ export default function EmployeeManagement() {
       {/* Delete Confirmation */}
       <AnimatePresence>
         {deleteId && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <div className="cw-modal-backdrop">
             <motion.div
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.95 }}
-              className="glass-card w-full max-w-sm p-6 relative border-red-500/30"
+              className="cw-modal-panel glass-card w-full max-w-sm relative" role="alertdialog" aria-modal="true" aria-label="Confirm employee deletion"
             >
               <div className="w-12 h-12 rounded-full bg-red-500/10 flex items-center justify-center mx-auto mb-4">
                 <Trash2 className="w-6 h-6 text-red-400" />
               </div>
               <h3 className="text-lg font-bold text-white text-center mb-2">Delete Employee?</h3>
               <p className="text-slate-400 text-sm text-center mb-6">This action cannot be undone. The employee record will be permanently removed.</p>
+              {error&&<p role="alert" className="cw-error mb-4">{error}</p>}
               <div className="flex gap-3">
                 <button onClick={() => setDeleteId(null)} className="flex-1 py-2.5 rounded-xl border border-slate-700 text-slate-300 font-medium hover:bg-slate-800 transition-colors">
                   Cancel
