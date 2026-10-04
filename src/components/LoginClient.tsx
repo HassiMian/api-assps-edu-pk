@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { BrainCircuit, Lock, Mail, ArrowRight, ShieldAlert, Eye, EyeOff, ArrowLeft, Shield, Users, GraduationCap, User, Building } from 'lucide-react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import api from '@/utils/api';
 import PremiumLogo from '@/components/PremiumLogo';
 import { useAuth } from '@/context/AuthContext';
@@ -30,12 +30,14 @@ const roles = [
 
 export default function LoginClient() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { user, loading: authLoading, login: contextLogin } = useAuth();
   const [selectedRole, setSelectedRole] = useState<string | null>(null);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
+  const [retrySeconds, setRetrySeconds] = useState(0);
   const [loading, setLoading] = useState(false);
   const [schoolLogo, setSchoolLogo] = useState<string | null>(null);
   const [schoolId, setSchoolId] = useState<string | null>(null);
@@ -51,6 +53,12 @@ export default function LoginClient() {
   const [resetToken, setResetToken] = useState('');
   const [resetMessage, setResetMessage] = useState('');
   const [resetLoading, setResetLoading] = useState(false);
+
+  useEffect(() => {
+    if (retrySeconds <= 0) return;
+    const timer = window.setTimeout(() => setRetrySeconds(Math.max(0, retrySeconds - 1)), 1000);
+    return () => window.clearTimeout(timer);
+  }, [retrySeconds]);
 
   useEffect(() => {
     const params = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null
@@ -102,6 +110,10 @@ export default function LoginClient() {
     const selectedSchoolId = params?.get('school_id') || params?.get('schoolId') || null
     const selectedSchoolCode = params?.get('school_code') || params?.get('schoolCode') || null
     const selectedRoleParam = params?.get('role')?.toLowerCase() || null
+    const requestedPath = (params?.get('next') || '').split('?')[0].replace(/\/+$/, '');
+    const roleFromDestination = roles.find(role =>
+      requestedPath === `/${role.id}` || requestedPath.startsWith(`/${role.id}/`)
+    )?.id || null;
     if (params?.get('choose') === '1') {
       setSchoolId('default')
       setSchoolCode('DEFAULT')
@@ -112,8 +124,17 @@ export default function LoginClient() {
     }
     setSchoolId(selectedSchoolId)
     setSchoolCode(selectedSchoolCode)
-    if (selectedRoleParam && roles.some(r => r.id === selectedRoleParam)) {
-      setSelectedRole(selectedRoleParam)
+    // The portal destination is authoritative for the initial login screen.
+    // A stale ?role=student or previous chooser selection must not override
+    // a request to /login?next=/teacher.
+    const inferredRole = roleFromDestination || (
+      selectedRoleParam && roles.some(r => r.id === selectedRoleParam) ? selectedRoleParam : null
+    );
+    setSelectedRole(inferredRole);
+    if (inferredRole) {
+      setEmail('');
+      setPassword('');
+      setError('');
     }
     api.get('/settings/public', {
       params: selectedSchoolId ? { school_id: selectedSchoolId } : selectedSchoolCode ? { school_code: selectedSchoolCode } : undefined,
@@ -130,7 +151,7 @@ export default function LoginClient() {
         }
       })
       .catch(() => {});
-  }, []);
+  }, [searchParams]);
 
   const handleFindSchool = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -183,6 +204,7 @@ export default function LoginClient() {
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (retrySeconds > 0) return;
     setError('');
     setLoading(true);
 
@@ -211,7 +233,15 @@ export default function LoginClient() {
       }, 15000);
       const data = await loginRes.json().catch(() => ({}));
       if (!loginRes.ok && !data?.success) {
-        setError(data?.message || "Invalid email or password.");
+        if (loginRes.status === 429) {
+          const seconds = Number(loginRes.headers.get('retry-after'));
+          const waitSeconds = Number.isFinite(seconds) && seconds > 0
+            ? Math.min(900, Math.ceil(seconds)) : 60;
+          setRetrySeconds(waitSeconds);
+          setError(`Too many attempts for this login. Please wait ${waitSeconds} seconds before retrying.`);
+        } else {
+          setError(data?.message || "Invalid email or password.");
+        }
         setLoading(false);
         return;
       }
@@ -479,14 +509,14 @@ export default function LoginClient() {
 
                   <button
                     type="submit"
-                    disabled={loading}
+                    disabled={loading || retrySeconds > 0}
                     className={`w-full mt-1 bg-gradient-to-r ${activeRole?.gradient} text-white font-bold py-3.5 rounded-xl transition-all active:scale-95 disabled:opacity-50 flex items-center justify-center gap-2 shadow-lg ${activeRole?.shadow}`}
                   >
                     {loading ? (
                       <span className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin"></span>
                     ) : (
                       <>
-                        Secure Login <ArrowRight className="w-5 h-5" />
+                        {retrySeconds > 0 ? `Try again in ${retrySeconds}s` : 'Secure Login'} <ArrowRight className="w-5 h-5" />
                       </>
                     )}
                   </button>

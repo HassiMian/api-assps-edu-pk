@@ -3,6 +3,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { envString } from '@/lib/server/env';
+import { isIP } from 'node:net';
 import * as subscriptionList from '../saas-admin/subscription-requests/route';
 import * as subscriptionDetail from '../saas-admin/subscription-requests/[id]/route';
 import * as subscriptionApprove from '../saas-admin/subscription-requests/[id]/approve/route';
@@ -98,6 +99,11 @@ async function handler(req: NextRequest, { params }: { params: Promise<{ path: s
   if (auth) headers['Authorization'] = auth;
   const cookie = req.headers.get('cookie');
   if (cookie) headers['Cookie'] = cookie;
+  // Nginx sets X-Real-IP from its verified connection (Cloudflare peer
+  // ranges are pinned at Nginx). Pass one canonical value rather than a
+  // user-controlled X-Forwarded-For chain. Backend trusts only one hop.
+  const trustedClientIp = req.headers.get('x-real-ip')?.trim() || '';
+  if (isIP(trustedClientIp)) headers['X-Forwarded-For'] = trustedClientIp;
 
   try {
     const body = req.method !== 'GET' && req.method !== 'HEAD' ? await req.arrayBuffer() : undefined;
