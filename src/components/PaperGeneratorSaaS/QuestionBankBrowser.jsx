@@ -3,6 +3,7 @@ import { useState, useEffect } from 'react'
 import { useAcademicStore } from '../../services/useAcademicStore'
 import { usePaperStore } from './usePaperStore'
 import api from '@/utils/api'
+import { useAuth } from '@/context/AuthContext'
 
 const C = {
   card: 'rgba(8,24,43,0.96)', gold: '#C8991A', goldL: '#e8b420',
@@ -13,6 +14,9 @@ const C = {
 export default function QuestionBankBrowser() {
   const { activeClasses, subjectsForClass } = useAcademicStore()
   const { addSubject, questionCategories } = usePaperStore()
+  const { user } = useAuth()
+  const isTeacher = String(user?.role || '').toLowerCase() === 'teacher'
+  const [teacherClasses, setTeacherClasses] = useState([])
   
   const [questions, setQuestions] = useState([])
   const [total, setTotal] = useState(0)
@@ -29,10 +33,19 @@ export default function QuestionBankBrowser() {
   const [newSubject, setNewSubject] = useState({ name: '', nameUrdu: '', publisher: '', classLevel: '' })
   
   const limit = 20
-  const availableSubjects = classLevel ? subjectsForClass(classLevel) : []
-  const classOptions = activeClasses.length > 0
-    ? activeClasses
-    : ['1','2','3','4','5','6','7','8','9','10'].map(level => ({ level, name: `Class ${level}` }))
+  const classOptions = isTeacher
+    ? teacherClasses.map(item => ({ level: item.class_name, name: `${item.class_name}${item.section ? ` · ${item.section}` : ''}` }))
+    : (activeClasses.length > 0 ? activeClasses : ['1','2','3','4','5','6','7','8','9','10'].map(level => ({ level, name: `Class ${level}` })))
+  const availableSubjects = isTeacher
+    ? [...new Set(teacherClasses.filter(item => !classLevel || item.class_name === classLevel).flatMap(item => item.subjects || []).filter(Boolean))]
+    : (classLevel ? subjectsForClass(classLevel) : [])
+
+  useEffect(() => {
+    if (!isTeacher) return
+    api.get('/portal/teaching-options').then(res => {
+      if (res.data?.success && Array.isArray(res.data?.data?.classes)) setTeacherClasses(res.data.data.classes)
+    }).catch(() => setTeacherClasses([]))
+  }, [isTeacher])
 
   useEffect(() => {
     fetchQuestions()
@@ -96,12 +109,18 @@ export default function QuestionBankBrowser() {
           <h3 style={{ margin: 0, color: C.gold }}>Question Bank</h3>
           <div style={{ color: C.muted, fontSize: 12, marginTop: 4 }}>Filter questions by class, subject, chapter, topic and category.</div>
         </div>
-        <button onClick={() => setShowAddSubject(p => !p)} style={{ background: `linear-gradient(135deg, ${C.gold}, ${C.goldL})`, color: '#071e34', border: 'none', borderRadius: 10, padding: '10px 16px', fontWeight: 800, cursor: 'pointer' }}>
-          {showAddSubject ? 'Close' : 'Add Subject'}
-        </button>
+        {isTeacher ? (
+          <span style={{ background:'#eef4f7', border:'1px solid #d7e2e8', color:'#38566d', borderRadius:10, padding:'8px 12px', fontSize:11, fontWeight:800 }}>
+            Read-only · approved assigned questions
+          </span>
+        ) : (
+          <button onClick={() => setShowAddSubject(p => !p)} style={{ background: `linear-gradient(135deg, ${C.gold}, ${C.goldL})`, color: '#071e34', border: 'none', borderRadius: 10, padding: '10px 16px', fontWeight: 800, cursor: 'pointer' }}>
+            {showAddSubject ? 'Close' : 'Add Subject'}
+          </button>
+        )}
       </div>
 
-      {showAddSubject && (
+      {!isTeacher && showAddSubject && (
         <form onSubmit={handleAddSubject} style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, padding: 16, marginBottom: 16, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12 }}>
           <input value={newSubject.name} onChange={e => setNewSubject(prev => ({ ...prev, name: e.target.value }))} placeholder="Subject Name (English)" style={inpStyle} />
           <input value={newSubject.nameUrdu} onChange={e => setNewSubject(prev => ({ ...prev, nameUrdu: e.target.value }))} placeholder="Subject Name (Urdu)" dir="rtl" style={inpStyle} />
@@ -126,9 +145,11 @@ export default function QuestionBankBrowser() {
         <select value={subject} onChange={e => { setSubject(e.target.value); setPage(1) }} style={inpStyle} disabled={!classLevel}>
           <option value="">All Subjects</option>
           {availableSubjects.map(s => <option key={s} value={s}>{s}</option>)}
-          <option value="Biology">Biology</option>
-          <option value="Physics">Physics</option>
-          <option value="Chemistry">Chemistry</option>
+          {!isTeacher && <>
+            <option value="Biology">Biology</option>
+            <option value="Physics">Physics</option>
+            <option value="Chemistry">Chemistry</option>
+          </>}
         </select>
         
         <input value={chapter} onChange={e => { setChapter(e.target.value); setPage(1) }} placeholder="Search Chapter" style={inpStyle} />
@@ -174,10 +195,10 @@ export default function QuestionBankBrowser() {
                 </div>
               )}
             </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, minWidth: 80 }}>
+            {!isTeacher && <div style={{ display: 'flex', flexDirection: 'column', gap: 8, minWidth: 80 }}>
               <button onClick={() => alert('Edit feature coming soon')} style={{ background: 'transparent', border: `1px solid ${C.blue}`, color: C.blue, padding: '6px', borderRadius: 6, cursor: 'pointer', fontSize: 11 }}>Edit</button>
               <button onClick={() => handleDelete(q.id)} style={{ background: 'transparent', border: `1px solid ${C.red}`, color: C.red, padding: '6px', borderRadius: 6, cursor: 'pointer', fontSize: 11 }}>Delete</button>
-            </div>
+            </div>}
           </div>
         ))}
       </div>

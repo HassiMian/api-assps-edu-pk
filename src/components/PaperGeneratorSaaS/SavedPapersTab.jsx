@@ -1,7 +1,10 @@
 import SavedPaperLibraryPanel from './SavedPaperLibraryPanel'
 import { normalizeSavedPaperForLoad, queueSavedPaperReopen } from './savedPaperUtils'
+import { useAuth } from '@/context/AuthContext'
 
 export default function SavedPapersTab({ onLoadPaper }) {
+  const { user } = useAuth()
+  const teacher = String(user?.role || '').toLowerCase() === 'teacher'
   return (
     <SavedPaperLibraryPanel
       onLoadPaper={(paper) => {
@@ -12,8 +15,8 @@ export default function SavedPapersTab({ onLoadPaper }) {
         onLoadPaper?.(normalized)
       }}
       sourceFilter="all"
-      title="Saved Papers"
-      subtitle="Search, reopen, or bulk print saved papers from Paper Studio and Unified Generator."
+      title={teacher ? "My Papers" : "Saved Papers"}
+      subtitle={teacher ? "Only papers created by your signed-in teacher account are shown here." : "Search, reopen, or bulk print school papers."}
     />
   )
 }

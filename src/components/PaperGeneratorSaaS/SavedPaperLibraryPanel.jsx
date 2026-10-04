@@ -44,6 +44,8 @@ export default function SavedPaperLibraryPanel({
   const [renaming, setRenaming] = useState(null)
   const [renameVal, setRenameVal] = useState('')
   const [confirmDelete, setConfirmDelete] = useState(null)
+  const [vaultError, setVaultError] = useState('')
+  const [mutating, setMutating] = useState(false)
 
   const classOptions = useMemo(() => [...new Set(savedPapers.map(p => p.config?.classLevel || p.config?.className).filter(Boolean))].sort(), [savedPapers])
   const subjectOptions = useMemo(() => [...new Set(savedPapers.map(p => p.config?.subject || p.config?.subjectName).filter(Boolean))].sort(), [savedPapers])
@@ -76,9 +78,12 @@ export default function SavedPaperLibraryPanel({
     setRenameVal(paper.name)
   }
 
-  function submitRename() {
-    if (renameVal.trim()) renameSavedPaper(renaming, renameVal.trim())
-    setRenaming(null)
+  async function submitRename() {
+    if (!renameVal.trim()) return setRenaming(null)
+    setMutating(true); setVaultError('')
+    try { await renameSavedPaper(renaming, renameVal.trim()); setRenaming(null) }
+    catch (err) { setVaultError(err?.message || 'Paper rename failed.') }
+    finally { setMutating(false) }
   }
 
   function handleBulkPrint() {
@@ -86,13 +91,20 @@ export default function SavedPaperLibraryPanel({
     printSavedPapers(selectedPapers, paperSettings)
   }
 
-  function handleBulkDelete() {
-    selectedPapers.forEach(paper => deleteSavedPaper(paper.id))
-    setSelectedIds(new Set())
+  async function handleBulkDelete() {
+    if (!selectedPapers.length || mutating) return
+    setMutating(true); setVaultError('')
+    try {
+      for (const paper of selectedPapers) await deleteSavedPaper(paper.id)
+      setSelectedIds(new Set())
+    } catch (err) {
+      setVaultError(err?.message || 'One or more papers could not be deleted.')
+    } finally { setMutating(false) }
   }
 
   return (
     <div>
+      {vaultError && <div role="alert" style={{ marginBottom: 12, padding: '10px 14px', borderRadius: 12, background: '#fff1f0', border: '1px solid #efc8c3', color: '#8f342d', fontSize: 12, fontWeight: 700 }}>{vaultError}</div>}
       <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 18, padding: '18px 24px', marginBottom: 20, display: 'grid', gap: 14 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
           <div style={{ flex: 1, minWidth: 220 }}>
@@ -139,7 +151,7 @@ export default function SavedPaperLibraryPanel({
             <div style={{ color: C.muted, fontSize: 13, marginBottom: 24 }}>"{confirmDelete.name}" will be permanently deleted.</div>
             <div style={{ display: 'flex', gap: 10 }}>
               <button onClick={() => setConfirmDelete(null)} style={{ flex: 1, background: 'rgba(15,23,42,0.46)', border: `1px solid ${C.border}`, borderRadius: 10, padding: '10px 0', color: C.silver, fontWeight: 600, cursor: 'pointer' }}>Cancel</button>
-              <button onClick={() => { deleteSavedPaper(confirmDelete.id); setConfirmDelete(null); setSelectedIds(prev => { const next = new Set(prev); next.delete(confirmDelete.id); return next }) }} style={{ flex: 1, background: 'rgba(255,55,95,0.2)', border: '1px solid rgba(255,55,95,0.4)', borderRadius: 10, padding: '10px 0', color: C.red, fontWeight: 700, cursor: 'pointer' }}>Delete</button>
+              <button disabled={mutating} onClick={async () => { setMutating(true); setVaultError(''); try { await deleteSavedPaper(confirmDelete.id); setConfirmDelete(null); setSelectedIds(prev => { const next = new Set(prev); next.delete(confirmDelete.id); return next }) } catch (err) { setVaultError(err?.message || 'Paper could not be deleted.'); setConfirmDelete(null) } finally { setMutating(false) } }} style={{ flex: 1, background: 'rgba(255,55,95,0.2)', border: '1px solid rgba(255,55,95,0.4)', borderRadius: 10, padding: '10px 0', color: C.red, fontWeight: 700, cursor: 'pointer' }}>Delete</button>
             </div>
           </div>
         </div>

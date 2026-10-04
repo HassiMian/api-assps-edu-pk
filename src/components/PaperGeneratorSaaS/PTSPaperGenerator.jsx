@@ -911,7 +911,7 @@ function QuestionPanel({ subjectId, syllabusId, selectedChapters, paper, onPaper
  setSelIds(n)
  }
 
- function doSave() {
+ async function doSave() {
  if (!totalQs) return
  const synced = applyManualEdits()
  const savePaperState = synced.paper
@@ -919,7 +919,9 @@ function QuestionPanel({ subjectId, syllabusId, selectedChapters, paper, onPaper
  const name = `${subjectName} ${className} — ${new Date().toLocaleDateString('en-GB')}`
  const selectedQuestions = {}
  saveTypes.forEach(t => { selectedQuestions[t.value] = { questions: savePaperState[t.value] || [], marks: savePaperState[`${t.value}_marks`] || t.marks || 1 } })
- const saved = savePaper({ 
+ let saved
+ try {
+  saved = await savePaper({ 
        name, 
        config: cfg, 
        ...savePaperState, 
@@ -934,9 +936,12 @@ function QuestionPanel({ subjectId, syllabusId, selectedChapters, paper, onPaper
        sourceTab: loadedPaper?.sourceTab || overrideConfig?.sourceTab || 'build',
        structureMode: loadedPaper?.structureMode || overrideConfig?.structureMode,
        templatePreset: loadedPaper?.templatePreset || overrideConfig?.templatePreset || tmpl,
-       teacherHidden: overrideConfig?.teacherHidden || false,
      })
-  if (!saved) return // Failed due to quota exceeded
+ } catch (err) {
+  alert(err?.message || 'Paper could not be saved to My Papers.')
+  return
+ }
+  if (!saved) return
   
   const questionBankMeta = loadedPaper?.questionBankSubjectMeta || {
   name: overrideConfig?.subjectName || overrideConfig?.subject || subjectName || '',

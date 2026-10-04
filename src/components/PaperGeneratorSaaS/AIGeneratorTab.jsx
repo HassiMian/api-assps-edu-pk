@@ -347,19 +347,22 @@ export default function AIGeneratorTab({ onProceedToPreview }) {
     })
   }
 
-  function handleSave() {
+  async function handleSave() {
     if (!generated) return
-    savePaper({
-      name: `${subject} ${examType} - ${new Date().toLocaleDateString()}`,
-      config: { classLevel, subject, examType, medium, title: `${subject} ${examType}`, paperCode, examDate },
-      selectedMCQ:   generated.selectedMCQ   || [],
-      selectedShort: generated.selectedShort || [],
-      selectedLong:  generated.selectedLong  || [],
-      ...Object.fromEntries(questionCategories.map(cat => [cat.id, generated[cat.id] || []])),
-      categoryPlan: generated.categoryPlan || categoryPlan,
-      teacherHidden: isTeacher,
-    })
-    alert('Paper saved! Admin can access it from the SaaS panel.')
+    try {
+      await savePaper({
+        name: `${subject} ${examType} - ${new Date().toLocaleDateString()}`,
+        config: { classLevel, subject, examType, medium, title: `${subject} ${examType}`, paperCode, examDate },
+        selectedMCQ:   generated.selectedMCQ   || [],
+        selectedShort: generated.selectedShort || [],
+        selectedLong:  generated.selectedLong  || [],
+        ...Object.fromEntries(questionCategories.map(cat => [cat.id, generated[cat.id] || []])),
+        categoryPlan: generated.categoryPlan || categoryPlan,
+      })
+      alert('Paper saved to My Papers.')
+    } catch (err) {
+      alert(err?.message || 'Paper could not be saved to My Papers.')
+    }
   }
 
   const canGenerate = subject && classLevel

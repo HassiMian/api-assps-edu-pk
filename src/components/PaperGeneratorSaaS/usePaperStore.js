@@ -5,7 +5,6 @@ import {
   deletePaperOnServer,
   fetchSavedPapersFromServer,
   isPaperVaultAvailable,
-  mergeVaultPapers,
   renamePaperOnServer,
   savePaperToServer,
   notifyAdminPaperSaved,
@@ -22,8 +21,22 @@ import {
   updateQuestionOnServer,
 } from './questionBankService'
 
-const STORE_KEY = 'al_siddique_paper_store'
+const STORE_KEY_PREFIX = 'al_siddique_paper_store_v4'
 const STORE_SYNC_EVENT = 'al_siddique_paper_store_updated'
+
+function currentPaperStoreKey() {
+  if (typeof window === 'undefined') return `${STORE_KEY_PREFIX}:server`
+  try {
+    const raw = localStorage.getItem('user') || localStorage.getItem('al_siddique_user')
+    const user = raw ? JSON.parse(raw) : null
+    const tenant = user?.tenant_id || user?.tenantId || user?.school_id || user?.schoolId || 'school'
+    const id = user?.id || user?.user_id || 'anonymous'
+    return `${STORE_KEY_PREFIX}:${tenant}:${id}`
+  } catch {
+    return `${STORE_KEY_PREFIX}:unknown`
+  }
+}
+
 
 const SUBJECT_CATEGORY_MAP = {
   urdu: ['mcq', 'wahid_jama', 'mutradif', 'mutzad', 'sentence_correction', 'sentence_usage', 'alfaz_maani', 'comprehension', 'essay', 'letter', 'muhawara', 'grammar'],
@@ -124,7 +137,7 @@ const defaultStore = {
 
 function loadStore() {
   try {
-    const raw = localStorage.getItem(STORE_KEY)
+    const raw = localStorage.getItem(currentPaperStoreKey())
     if (!raw) {
       saveStore(defaultStore)
       return defaultStore
@@ -136,7 +149,7 @@ function loadStore() {
       ...parsed,
       subjects: parsed.subjects || [],
       questions: parsed.questions || [],
-      savedPapers: parsed.savedPapers || [],
+      savedPapers: [],
       publishers: parsed.publishers || defaultStore.publishers,
       questionCategories: parsed.questionCategories || defaultStore.questionCategories,
       questionTypes: mergeQuestionTypes(parsed.questionTypes),
@@ -148,7 +161,7 @@ function loadStore() {
 }
 
 function saveStore(data) {
-  localStorage.setItem(STORE_KEY, JSON.stringify(data))
+  localStorage.setItem(currentPaperStoreKey(), JSON.stringify({ ...data, savedPapers: [] }))
 }
 
 function estimatePrints(classLevel) {
@@ -236,8 +249,7 @@ export function usePaperStore() {
         .then((serverPapers) => {
           if (!Array.isArray(serverPapers)) return
           setStore(prev => {
-            const merged = mergeVaultPapers(prev.savedPapers || [], serverPapers)
-            const next = { ...prev, savedPapers: merged }
+            const next = { ...prev, savedPapers: serverPapers }
             saveStore(next)
             return next
           })
@@ -253,7 +265,7 @@ export function usePaperStore() {
       })
     }).catch(() => {})
 
-    const handler = () => setStore(loadStore())
+    const handler = () => setStore(prev => ({ ...loadStore(), savedPapers: prev.savedPapers }))
     window.addEventListener('storage', handler)
     window.addEventListener(STORE_SYNC_EVENT, handler)
     return () => {
@@ -476,43 +488,36 @@ export function usePaperStore() {
     return imported.length
   }
 
-  function savePaper({ name, config, selectedMCQ, selectedShort, selectedLong, ...rest }) {
+  async function savePaper({ name, config, selectedMCQ=[], selectedShort=[], selectedLong=[], ...rest }) {
     const paper = {
-      id: `paper_${Date.now()}`,
+      id: `pending_${Date.now()}`,
       name: name || `Paper ${new Date().toLocaleDateString('en-GB')}`,
       config, selectedMCQ, selectedShort, selectedLong,
       ...rest,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     }
-    update(s => ({ ...s, savedPapers: [paper, ...s.savedPapers] }))
-    if (isPaperVaultAvailable()) {
-      savePaperToServer(paper)
-        .then((saved) => {
-          if (!saved?.id) return
-          update(s => ({
-            ...s,
-            savedPapers: s.savedPapers.map(p => p.id === paper.id ? { ...p, ...saved, serverSynced: true } : p),
-          }))
-          notifyAdminPaperSaved(saved).catch(() => {})
-        })
-        .catch((err) => console.warn('Paper vault save failed:', err?.message || err))
-    }
-    return paper
+    if (!isPaperVaultAvailable()) throw new Error('Paper Vault is unavailable in this session.')
+    const saved = await savePaperToServer(paper)
+    if (!saved?.id) throw new Error('The server did not confirm the saved paper.')
+    update(s => ({ ...s, savedPapers: [saved, ...s.savedPapers.filter(p => String(p.id) !== String(saved.id))] }))
+    notifyAdminPaperSaved(saved).catch(() => {})
+    return saved
   }
 
-  function deleteSavedPaper(id) {
-    update(s => ({ ...s, savedPapers: s.savedPapers.filter(p => p.id !== id) }))
-    if (isPaperVaultAvailable()) {
-      deletePaperOnServer(id).catch((err) => console.warn('Paper vault delete failed:', err?.message || err))
-    }
+  async function deleteSavedPaper(id) {
+    if (!isPaperVaultAvailable()) throw new Error('Paper Vault is unavailable in this session.')
+    await deletePaperOnServer(id)
+    update(s => ({ ...s, savedPapers: s.savedPapers.filter(p => String(p.id) !== String(id)) }))
+    return true
   }
 
-  function renameSavedPaper(id, name) {
-    update(s => ({ ...s, savedPapers: s.savedPapers.map(p => p.id === id ? { ...p, name, updatedAt: new Date().toISOString() } : p) }))
-    if (isPaperVaultAvailable()) {
-      renamePaperOnServer(id, name).catch((err) => console.warn('Paper vault rename failed:', err?.message || err))
-    }
+  async function renameSavedPaper(id, name) {
+    if (!isPaperVaultAvailable()) throw new Error('Paper Vault is unavailable in this session.')
+    const saved = await renamePaperOnServer(id, name)
+    if (!saved?.id) throw new Error('The server did not confirm the paper rename.')
+    update(s => ({ ...s, savedPapers: s.savedPapers.map(p => String(p.id) === String(id) ? { ...p, ...saved } : p) }))
+    return saved
   }
 
   function updatePaperSettings(changes) {

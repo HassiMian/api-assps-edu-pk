@@ -649,12 +649,14 @@ export default function UnifiedPaperPreviewEngine({ config, selectedMCQ, selecte
  window.print()
  }
 
- function handleSave() {
+ async function handleSave() {
  const expiresAt = retentionMode === 'custom'
  ? (retentionDate ? new Date(`${retentionDate}T23:59:59`).toISOString() : null)
  : (retentionMode === 'forever' ? null : new Date(Date.now() + Number(retentionMode) * 24 * 60 * 60 * 1000).toISOString())
- const saved = savePaper({ name: saveName, config: mergedConfig, selectedMCQ, selectedShort, selectedLong, paperSource, expiresAt })
- if (!saved) { alert('Failed to save paper: Storage limit reached.'); return; }
+ let saved
+  try { saved = await savePaper({ name: saveName, config: mergedConfig, selectedMCQ, selectedShort, selectedLong, paperSource, expiresAt }) }
+  catch (err) { alert(err?.message || 'Paper could not be saved to My Papers.'); return }
+ if (!saved) return
  
  if (saveQuestionsToBank) {
  importPaperQuestionsToBank({

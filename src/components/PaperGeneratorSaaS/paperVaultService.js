@@ -1,47 +1,40 @@
 import api from '@/utils/api'
 
-function hasAuth() {
-  try {
-    return Boolean(typeof window !== 'undefined' && (localStorage.getItem('token') || localStorage.getItem('al_siddique_token')))
-  } catch {
-    return false
-  }
-}
-
 export function isPaperVaultAvailable() {
-  return hasAuth()
+  // Authentication is HTTP-only-cookie based in Connect; localStorage tokens are not authoritative.
+  return typeof window !== 'undefined'
 }
 
 export async function fetchSavedPapersFromServer() {
-  if (!hasAuth()) return null
+  if (!isPaperVaultAvailable()) return null
   const { data } = await api.get('/paper/vault')
   if (!data?.success) throw new Error(data?.message || 'Could not load saved papers')
   return Array.isArray(data.papers) ? data.papers : []
 }
 
 export async function savePaperToServer(paper) {
-  if (!hasAuth()) return null
+  if (!isPaperVaultAvailable()) return null
   const { data } = await api.post('/paper/vault', { paper })
   if (!data?.success) throw new Error(data?.message || 'Could not save paper')
   return data.paper
 }
 
 export async function renamePaperOnServer(id, name) {
-  if (!hasAuth()) return null
+  if (!isPaperVaultAvailable()) return null
   const { data } = await api.patch(`/paper/vault/${encodeURIComponent(id)}`, { name })
   if (!data?.success) throw new Error(data?.message || 'Could not rename paper')
   return data.paper
 }
 
 export async function deletePaperOnServer(id) {
-  if (!hasAuth()) return false
+  if (!isPaperVaultAvailable()) return false
   const { data } = await api.delete(`/paper/vault/${encodeURIComponent(id)}`)
   if (!data?.success) throw new Error(data?.message || 'Could not delete paper')
   return true
 }
 
 export async function notifyAdminPaperSaved(paper) {
-  if (!hasAuth()) return null
+  if (!isPaperVaultAvailable()) return null
   const classLevel = paper?.config?.classLevel
   const subjectName = paper?.config?.subject || paper?.config?.subjectName
   if (!classLevel || !subjectName) return null
