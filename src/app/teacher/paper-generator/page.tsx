@@ -1,197 +1,114 @@
 "use client";
 
 import DashboardLayout from "@/components/DashboardLayout";
-import { useEffect, useMemo, useState, type ComponentType } from "react";
+import {useCallback,useEffect,useMemo,useState,type ComponentType} from "react";
 import {
-  BookOpenCheck, BrainCircuit, ChevronRight, ClipboardList, FileStack,
-  GraduationCap, Layers3, LibraryBig, NotebookTabs, ScanLine, Sparkles,
-  UsersRound, WandSparkles, Wifi, ShieldCheck, RefreshCw, School, FileText,
+  ArrowRight,BookOpenCheck,BrainCircuit,ChevronRight,FileStack,FileText,
+  GraduationCap,LibraryBig,ScanLine,ShieldCheck,Sparkles,Upload,UsersRound,
+  WandSparkles,LayoutTemplate,RefreshCw,School,Layers3,
 } from "lucide-react";
 import PTSPaperGenerator from "@/components/PaperGeneratorSaaS/PTSPaperGenerator";
-import AIGeneratorTab from "@/components/PaperGeneratorSaaS/AIGeneratorTab";
-import ManualQuestionEntry from "@/components/PaperGeneratorSaaS/ManualQuestionEntry";
+const PaperGenerator:any=PTSPaperGenerator;
 import QuestionBankBrowser from "@/components/PaperGeneratorSaaS/QuestionBankBrowser";
-import { usePaperStore } from "@/components/PaperGeneratorSaaS/usePaperStore";
-import BoardPaperGenerator from "@/components/PaperGeneratorSaaS/BoardPaperGenerator";
-import UnifiedPaperGenerator from "@/components/PaperGeneratorSaaS/UnifiedPaperGenerator";
 import SavedPapersTab from "@/components/PaperGeneratorSaaS/SavedPapersTab";
+import AIGeneratorTab from "@/components/PaperGeneratorSaaS/AIGeneratorTab";
 import AIImportTab from "@/components/PaperGeneratorSaaS/AIImportTab";
 import HandwrittenScannerTab from "@/components/PaperGeneratorSaaS/HandwrittenScannerTab";
-import NotesMakerTab from "@/components/PaperGeneratorSaaS/NotesMakerTab";
-import DailyDiaryFeature from "@/components/PaperGeneratorSaaS/DailyDiaryFeature";
-import LessonPlanTab from "@/components/PaperGeneratorSaaS/LessonPlanTab";
-import ConnectOnlineExamWizard from "@/components/OnlineExam/ConnectOnlineExamWizard";
+import BoardPaperGenerator from "@/components/PaperGeneratorSaaS/BoardPaperGenerator";
 import PaperAiJobToasts from "@/components/PaperGeneratorSaaS/PaperAiJobToasts";
-import { useAuth } from "@/context/AuthContext";
+import {createBlankPaperDraft,BASIC_PAPER_CLASS_LEVELS} from "@/components/PaperGeneratorSaaS/paperCreationDraft";
 import api from "@/utils/api";
 
-type TabId = "build" | "unified" | "board" | "qbank" | "saved" | "manual" | "ai" | "import" | "scan" | "notes" | "diary" | "lesson" | "online";
-type TeachingClass = { class_name: string; section?: string; subjects?: string[] };
-type StudentRow = { id: number | string; name?: string; class?: string; section?: string; roll_number?: string | number };
+type Workspace="home"|"create"|"qbank"|"papers";
+type CreateSource="start"|"blank"|"bank"|"editor"|"ai"|"import"|"scan"|"board";
+type Assignment={className:string;section?:string;subjects:string[]};
+type ProjectedPaper={id:string;name:string;className?:string;subjectName?:string;updatedAt?:string};
+type WorkspaceNav={id:Workspace;label:string;description:string;icon:ComponentType<{size?:number}>};
 
-type NavItem = { id: TabId; label: string; description: string; icon: ComponentType<{size?: number; className?: string}> };
-const NAV_GROUPS: { label: string; items: NavItem[] }[] = [
-  { label: "CREATE", items: [
-    { id: "build", label: "Paper Builder", description: "School paper workflow", icon: FileText },
-    { id: "unified", label: "Unified Builder", description: "Structured assessment", icon: Layers3 },
-    { id: "board", label: "Board Pattern", description: "Board-style paper", icon: GraduationCap },
-    { id: "manual", label: "Manual Entry", description: "Add your own questions", icon: NotebookTabs },
-  ]},
-  { label: "LIBRARY", items: [
-    { id: "qbank", label: "Question Bank", description: "Approved assigned questions", icon: LibraryBig },
-    { id: "saved", label: "My Papers", description: "Only papers created by you", icon: FileStack },
-  ]},
-  { label: "INTELLIGENCE", items: [
-    { id: "ai", label: "AI Generator", description: "Generate a draft", icon: WandSparkles },
-    { id: "import", label: "Import PDF", description: "Extract questions", icon: BrainCircuit },
-    { id: "scan", label: "AI Scan", description: "Scan handwritten pages", icon: ScanLine },
-  ]},
-  { label: "TEACHING", items: [
-    { id: "online", label: "Online Test", description: "Prepare online assessment", icon: Wifi },
-    { id: "notes", label: "Notes Maker", description: "Create learning notes", icon: BookOpenCheck },
-    { id: "diary", label: "Daily Diary", description: "Class diary", icon: ClipboardList },
-    { id: "lesson", label: "Lesson Plans", description: "Plan instruction", icon: Sparkles },
-  ]},
+const WORKSPACES:WorkspaceNav[]=[
+  {id:"home",label:"Studio Home",description:"Your paper work at a glance",icon:Sparkles},
+  {id:"create",label:"Create Paper",description:"One canonical authoring flow",icon:FileText},
+  {id:"qbank",label:"Question Bank",description:"Approved assigned questions",icon:LibraryBig},
+  {id:"papers",label:"My Papers",description:"Only papers created by you",icon:FileStack},
 ];
 
-export default function TeacherPaperGenerator() {
-  const { user } = useAuth();
-  const { paperSettings, savedPapers } = usePaperStore();
-  const [activeTab, setActiveTab] = useState<TabId>("build");
-  const [loadedPaper, setLoadedPaper] = useState<any>(null);
-  const [classes, setClasses] = useState<TeachingClass[]>([]);
-  const [students, setStudents] = useState<StudentRow[]>([]);
-  const [schoolName, setSchoolName] = useState("AL SIDDIQUE SCHOLARS PUBLIC SCHOOL");
-  const [schoolLogo, setSchoolLogo] = useState<string | null>(null);
-  const [contextError, setContextError] = useState("");
-  const [contextLoading, setContextLoading] = useState(true);
+const SOURCE_CARDS=[
+  {id:"blank",title:"Blank Paper",detail:"Type questions yourself. Question Bank is not required.",tag:"01",icon:FileText},
+  {id:"bank",title:"Build from Question Bank",detail:"Select approved questions from your assigned academic scope.",tag:"02",icon:LibraryBig},
+  {id:"papers",title:"Duplicate / Edit My Paper",detail:"Reopen or duplicate only papers owned by your account.",tag:"03",icon:FileStack},
+  {id:"ai",title:"AI-assisted Draft",detail:"Generate a draft, then review it before it enters the document.",tag:"ASSIST",icon:WandSparkles},
+  {id:"import",title:"Import PDF",detail:"Extract candidate questions with review before commit.",tag:"INGEST",icon:Upload},
+  {id:"scan",title:"Scan Handwritten",detail:"Convert handwritten source material into reviewable content.",tag:"INGEST",icon:ScanLine},
+  {id:"board",title:"Board / Pattern Template",detail:"Apply a paper pattern inside the same authoring pipeline.",tag:"LAYOUT",icon:LayoutTemplate},
+] as const;
 
-  const loadContext = async () => {
-    setContextLoading(true); setContextError("");
-    const [teaching, roster, settings] = await Promise.allSettled([
-      api.get("/portal/teaching-options"),
-      api.get("/students?active=true"),
-      api.get("/settings"),
-    ]);
-    let failures = 0;
-    if (teaching.status === "fulfilled" && teaching.value.data?.success && Array.isArray(teaching.value.data?.data?.classes)) {
-      setClasses(teaching.value.data.data.classes);
-    } else { setClasses([]); failures++; }
-    if (roster.status === "fulfilled" && roster.value.data?.success && Array.isArray(roster.value.data?.data)) {
-      setStudents(roster.value.data.data);
-    } else { setStudents([]); failures++; }
-    if (settings.status === "fulfilled" && settings.value.data?.success && settings.value.data?.data) {
-      const data = settings.value.data.data;
-      if (data.school_name) setSchoolName(data.school_name);
-      if (data.school_logo) setSchoolLogo(String(data.school_logo));
-    }
-    if (failures) setContextError("Some live class context could not be verified. Paper creation remains limited by server-side assignment rules.");
-    setContextLoading(false);
+function BlankSetup({assignments,onBack,onCreate}:{assignments:Assignment[];onBack:()=>void;onCreate:(paper:any)=>void}){
+  const [classKey,setClassKey]=useState(""); const [subject,setSubject]=useState("");
+  const [title,setTitle]=useState("First Term Examination"); const [language,setLanguage]=useState("english");
+  const [marks,setMarks]=useState(""); const [duration,setDuration]=useState("2 Hours"); const [error,setError]=useState("");
+  const classOptions=assignments.map(a=>({value:`${a.className}::${a.section||""}`,label:`${a.className}${a.section?` · ${a.section}`:""}`,assignment:a}));
+  const selected=classOptions.find(x=>x.value===classKey)?.assignment;
+  const subjects=selected?.subjects||[];
+  const submit=(e:React.FormEvent)=>{e.preventDefault();setError("");try{if(!selected)throw new Error("Select an assigned class.");if(assignments.length&&subjects.length&&!subjects.some(x=>x.toLowerCase()===subject.trim().toLowerCase()))throw new Error("Select a subject from your assigned teaching scope.");const paper:any=createBlankPaperDraft({classLevel:selected.className,subjectName:subject,title,language,targetMarks:marks,timeAllowed:duration,session:"2026-2027"});paper.config.section=selected.section||"";onCreate(paper)}catch(err:any){setError(err?.message||"Blank paper could not be created.")}};
+  return <form className="ps6-setup" onSubmit={submit}>
+    <div className="ps6-step-head"><div><span>CREATE PAPER · BLANK</span><h3>Set the paper context first</h3><p>The document starts empty. No synthetic questions are inserted.</p></div><button type="button" onClick={onBack}>Back</button></div>
+    <div className="ps6-form-grid">
+      <label>Class / Section<select value={classKey} onChange={e=>{setClassKey(e.target.value);setSubject("")}} required><option value="">Select class</option>{classOptions.map(x=><option value={x.value} key={x.value}>{x.label}</option>)}</select></label>
+      <label>Subject{subjects.length?<select value={subject} onChange={e=>setSubject(e.target.value)} required><option value="">Select assigned subject</option>{subjects.map(x=><option key={x}>{x}</option>)}</select>:<input value={subject} onChange={e=>setSubject(e.target.value)} placeholder="Subject" required/>}</label>
+      <label>Paper title<input value={title} onChange={e=>setTitle(e.target.value)} required/></label>
+      <label>Language<select value={language} onChange={e=>setLanguage(e.target.value)}><option value="english">English</option><option value="urdu">Urdu</option><option value="dual">Dual / Bilingual</option></select></label>
+      <label>Target marks <small>optional</small><input type="number" min="0" value={marks} onChange={e=>setMarks(e.target.value)} placeholder="Set later if blank"/></label>
+      <label>Duration<input value={duration} onChange={e=>setDuration(e.target.value)}/></label>
+    </div>
+    {error&&<div className="cw-error" role="alert">{error}</div>}
+    <div className="ps6-form-actions"><button className="ps6-primary" type="submit">Open empty PaperDocument <ArrowRight size={15}/></button></div>
+  </form>
+}
+
+export default function TeacherPaperGenerator(){
+  const [workspace,setWorkspace]=useState<Workspace>("home");
+  const [createSource,setCreateSource]=useState<CreateSource>("start");
+  const [loadedPaper,setLoadedPaper]=useState<any>(null);
+  const [assignments,setAssignments]=useState<Assignment[]>([]);
+  const [papers,setPapers]=useState<ProjectedPaper[]>([]);
+  const [contextLoading,setContextLoading]=useState(true);
+  const [contextError,setContextError]=useState("");
+
+  const loadProjection=useCallback(async()=>{setContextLoading(true);setContextError("");try{const [ctx,list]=await Promise.all([api.get('/portal/paper-studio/context'),api.get('/portal/paper-studio/papers')]);if(!ctx.data?.success||ctx.data?.data?.architectureVersion!=="v6")throw new Error("Paper Studio context is not available.");if(!list.data?.success||!Array.isArray(list.data?.data))throw new Error("My Papers could not be verified.");setAssignments(Array.isArray(ctx.data.data.assignments)?ctx.data.data.assignments:[]);setPapers(list.data.data)}catch(err:any){setAssignments([]);setPapers([]);setContextError(err?.response?.data?.message||err?.message||"Paper Studio context could not be verified.")}finally{setContextLoading(false)}},[]);
+  useEffect(()=>{loadProjection()},[loadProjection]);
+  useEffect(()=>{if(typeof window==='undefined')return;const tab=new URLSearchParams(window.location.search).get('tab');if(tab==='qbank')setWorkspace('qbank');else if(tab==='saved')setWorkspace('papers');else if(tab==='build'||tab==='unified'||tab==='board'||tab==='ai'||tab==='import'||tab==='scan')setWorkspace('create')},[]);
+
+  const subjects=useMemo(()=>[...new Set(assignments.flatMap(a=>a.subjects||[]).filter(Boolean))],[assignments]);
+  const openWorkspace=(id:Workspace)=>{setWorkspace(id);if(id==='create'&&!loadedPaper)setCreateSource('start');if(typeof window!=='undefined')window.history.replaceState({},"",`?workspace=${id}`)};
+  const openSource=(id:string)=>{if(id==='papers'){openWorkspace('papers');return}setWorkspace('create');setLoadedPaper(null);setCreateSource(id as CreateSource)};
+  const openPaper=(paper:any)=>{setLoadedPaper(paper);setWorkspace('create');setCreateSource('editor')};
+  const fromGenerated=(paper:any)=>{setLoadedPaper(paper);setWorkspace('create');setCreateSource('editor')};
+
+  const createContent=()=>{
+    if(!contextLoading&&!contextError&&!assignments.length)return <div className="ps6-assignment-block"><ShieldCheck size={24}/><h3>Teacher assignment required</h3><p>Paper creation is locked because this portal identity has no active class/subject assignment in the SaaS academic structure. Link the teacher first; My Papers remains available.</p></div>;
+    if(createSource==='start')return <div className="ps6-start"><div className="ps6-start-head"><span>ONE AUTHORING PIPELINE</span><h3>How do you want to start?</h3><p>Every method converges into the same paper document, validation and output pipeline.</p></div><div className="ps6-source-grid">{SOURCE_CARDS.map(card=>{const Icon=card.icon;return <button type="button" key={card.id} onClick={()=>openSource(card.id)}><span className="ps6-source-tag">{card.tag}</span><span className="ps6-source-icon"><Icon size={20}/></span><strong>{card.title}</strong><small>{card.detail}</small><span className="ps6-source-arrow">Continue <ChevronRight size={14}/></span></button>})}</div></div>;
+    if(createSource==='blank')return <BlankSetup assignments={assignments} onBack={()=>setCreateSource('start')} onCreate={openPaper}/>;
+    if(createSource==='bank')return <div className="ps6-engine-wrap"><div className="ps6-engine-note"><strong>Question Bank creation path</strong><span>Select class, subject, chapters and questions. The resulting draft uses the same paper workspace.</span></div><PaperGenerator onReturnToSource={()=>setCreateSource('start')}/></div>;
+    if(createSource==='editor')return <div className="ps6-engine-wrap"><div className="ps6-engine-note"><strong>PaperDocument workspace</strong><span>Edit content, marks and layout here. Saving remains server-authorized by your teacher assignment.</span></div><PaperGenerator loadedPaper={loadedPaper} onReturnToSource={()=>{setLoadedPaper(null);setCreateSource('start')}}/></div>;
+    if(createSource==='ai')return <AIGeneratorTab onProceedToPreview={fromGenerated}/>;
+    if(createSource==='import')return <AIImportTab/>;
+    if(createSource==='scan')return <HandwrittenScannerTab onProceedToPreview={fromGenerated}/>;
+    if(createSource==='board')return <BoardPaperGenerator loadedPaper={loadedPaper}/>;
+    return null;
   };
 
-  useEffect(() => { loadContext(); }, []);
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const tab = new URLSearchParams(window.location.search).get("tab") as TabId | null;
-    if (tab && NAV_GROUPS.some(group => group.items.some(item => item.id === tab))) setActiveTab(tab);
-  }, []);
-
-  const subjects = useMemo(() => [...new Set(classes.flatMap(item => item.subjects || []).filter(Boolean))], [classes]);
-  const active = NAV_GROUPS.flatMap(group => group.items).find(item => item.id === activeTab) || NAV_GROUPS[0].items[0];
-  const safeLogo = schoolLogo && (/^https?:\/\//i.test(schoolLogo) || schoolLogo.startsWith("/")) ? schoolLogo : null;
-
-  const openTab = (id: TabId) => {
-    setActiveTab(id);
-    if (id !== "build") setLoadedPaper(null);
-    if (typeof window !== "undefined") window.history.replaceState({}, "", `?tab=${id}`);
-  };
-  const handleProceedToPreview = (paper: any) => { setLoadedPaper(paper); openTab("build"); };
-
-  return (
-    <DashboardLayout role="teacher" title="Paper Studio">
-      <PaperAiJobToasts />
-      <div className="paper-studio-v4 paper-studio-v5">
-        <section className="ps4-hero">
-          <div className="ps4-brandmark" aria-hidden={!safeLogo}>
-            {safeLogo ? <img src={safeLogo} alt={`${schoolName} logo`} /> : <ShieldCheck size={30} />}
-          </div>
-          <div className="ps4-hero-copy">
-            <div className="ps4-eyebrow">ASSPS ACADEMIC OS · ASSESSMENT WORKSPACE V5</div>
-            <h1>Paper Studio <span className="ps5-version">V5</span></h1>
-            <p>Create secure, class-scoped assessments from the approved Question Bank, then continue them from <strong>My Papers</strong> anywhere you sign in.</p>
-            <div className="ps4-school-line"><School size={14}/><span>{schoolName}</span></div>
-          </div>
-          <div className="ps4-session-card">
-            <span className="ps4-session-dot" />
-            <div><strong>{user?.name || "Teacher"}</strong><small>Signed in · server-scoped teacher session</small></div>
-          </div>
-        </section>
-
-        {contextError && <div role="alert" className="ps4-context-error"><span>{contextError}</span><button type="button" onClick={loadContext}><RefreshCw size={14}/> Retry</button></div>}
-
-        <section className="ps4-metrics" aria-label="Teaching context">
-          <article><span className="ps4-metric-icon"><GraduationCap size={18}/></span><div><strong>{contextLoading ? "…" : classes.length}</strong><small>Assigned classes</small></div></article>
-          <article><span className="ps4-metric-icon"><UsersRound size={18}/></span><div><strong>{contextLoading ? "…" : students.length}</strong><small>Assigned students</small></div></article>
-          <article><span className="ps4-metric-icon"><LibraryBig size={18}/></span><div><strong>{contextLoading ? "…" : subjects.length}</strong><small>Assigned subjects</small></div></article>
-          <article><span className="ps4-metric-icon"><FileStack size={18}/></span><div><strong>{savedPapers.length}</strong><small>My saved papers</small></div></article>
-        </section>
-
-        <section className="ps5-trust-strip" aria-label="Teacher paper access policy">
-          <div><ShieldCheck size={18}/><span><strong>Private teacher vault</strong><small>My Papers contains only papers created by your signed-in account. Other teachers’ saved papers are neither listed nor editable here.</small></span></div>
-          <div><LibraryBig size={18}/><span><strong>Scoped Question Bank</strong><small>Only approved questions for your assigned classes and subjects are available to select.</small></span></div>
-          <div><School size={18}/><span><strong>Admin governed</strong><small>School-wide paper governance, approval and oversight remain an Admin/Principal responsibility.</small></span></div>
-        </section>
-
-        <section className="ps4-class-context">
-          <div className="ps4-context-heading"><div><span>LIVE CLASS CONTEXT</span><strong>Your teaching scope</strong></div><small>Paper saving is server-blocked outside these assignments.</small></div>
-          <div className="ps4-class-list">
-            {!contextLoading && !classes.length ? <div className="ps4-empty-context">No class assignment is linked to this teacher account yet.</div> : classes.map((item, index) => (
-              <div className="ps4-class-pill" key={`${item.class_name}-${item.section}-${index}`}>
-                <span>{item.class_name}{item.section ? ` · ${item.section}` : ""}</span>
-                <small>{(item.subjects || []).join(" · ") || "Assigned class"}</small>
-              </div>
-            ))}
-          </div>
-        </section>
-
-        <div className="ps4-workspace">
-          <aside className="ps4-rail" aria-label="Paper Studio tools">
-            {NAV_GROUPS.map(group => <div className="ps4-nav-group" key={group.label}>
-              <div className="ps4-nav-group-label">{group.label}</div>
-              {group.items.map(item => {
-                const Icon = item.icon; const selected = activeTab === item.id;
-                return <button key={item.id} type="button" aria-current={selected ? "page" : undefined} className={`ps4-nav-item ${selected ? "is-active" : ""}`} onClick={() => openTab(item.id)}>
-                  <span className="ps4-nav-icon"><Icon size={17}/></span>
-                  <span className="ps4-nav-copy"><strong>{item.label}</strong><small>{item.description}</small></span>
-                  <ChevronRight size={15} className="ps4-nav-chevron"/>
-                </button>;
-              })}
-            </div>)}
-          </aside>
-
-          <main className="ps4-main">
-            <header className="ps4-module-head"><div><span>{NAV_GROUPS.find(g => g.items.some(i => i.id === activeTab))?.label}</span><h2>{active.label}</h2><p>{active.description}. This workspace uses ASSPS paper rules and the server-authorized teacher scope.</p></div><ShieldCheck size={22}/></header>
-            <div className="ps4-mobile-nav" aria-label="Paper Studio mobile tools">
-              {NAV_GROUPS.flatMap(group => group.items).map(item => <button type="button" key={item.id} className={activeTab===item.id?"is-active":""} onClick={()=>openTab(item.id)}>{item.label}</button>)}
-            </div>
-            <div className={`paper-studio-v4-engine ps4-engine-${activeTab}`}>
-              {activeTab === "build" && <PTSPaperGenerator loadedPaper={loadedPaper} />}
-              {activeTab === "unified" && <UnifiedPaperGenerator />}
-              {activeTab === "board" && <BoardPaperGenerator loadedPaper={loadedPaper} />}
-              {activeTab === "qbank" && <QuestionBankBrowser />}
-              {activeTab === "saved" && <SavedPapersTab onLoadPaper={(paper:any) => { setLoadedPaper(paper); openTab(paper?.sourceTab === "unified" || paper?.paperSource === "unified-paper-generator" ? "unified" : "build"); }} />}
-              {activeTab === "manual" && <ManualQuestionEntry />}
-              {activeTab === "ai" && <AIGeneratorTab onProceedToPreview={handleProceedToPreview} />}
-              {activeTab === "import" && <AIImportTab />}
-              {activeTab === "scan" && <HandwrittenScannerTab onProceedToPreview={handleProceedToPreview} />}
-              {activeTab === "online" && <ConnectOnlineExamWizard />}
-              {activeTab === "notes" && <NotesMakerTab />}
-              {activeTab === "diary" && <DailyDiaryFeature />}
-              {activeTab === "lesson" && <LessonPlanTab settings={paperSettings} />}
-            </div>
-          </main>
-        </div>
-      </div>
-    </DashboardLayout>
-  );
+  return <DashboardLayout role="teacher" title="Paper Studio">
+    <PaperAiJobToasts/>
+    <div className="paper-studio-v6">
+      <section className="ps6-hero"><div className="ps6-crest"><ShieldCheck size={27}/></div><div className="ps6-hero-copy"><span>ASSPS ACADEMIC OS · CANONICAL PAPER PLATFORM</span><h1>Paper Studio <em>V6</em></h1><p>SaaS is the source of truth. Connect gives your signed teacher account a scoped authoring view of the same academic and paper pipeline.</p></div><div className="ps6-hero-metrics"><div><strong>{contextLoading?'…':assignments.length}</strong><small>Assigned groups</small></div><div><strong>{contextLoading?'…':subjects.length}</strong><small>Subjects</small></div><div><strong>{contextLoading?'…':papers.length}</strong><small>My papers</small></div></div></section>
+      {contextError&&<div className="cw-error ps6-context-error" role="alert"><span>{contextError}</span><button type="button" onClick={loadProjection}><RefreshCw size={14}/> Retry</button></div>}
+      <section className="ps6-scope"><div><School size={17}/><span><strong>Your SaaS teaching projection</strong><small>{contextLoading?'Verifying assignments…':assignments.length?assignments.map(a=>`${a.className}${a.section?`-${a.section}`:''}: ${(a.subjects||[]).join(', ')||'assigned'}`).join(' · '):'No class assignment is linked to this portal identity.'}</small></span></div><div><ShieldCheck size={17}/><span><strong>Own-paper boundary</strong><small>My Papers never exposes another teacher's saved-paper library.</small></span></div></section>
+      <div className="ps6-shell"><aside className="ps6-nav">{WORKSPACES.map(item=>{const Icon=item.icon;const active=workspace===item.id;return <button type="button" key={item.id} onClick={()=>openWorkspace(item.id)} className={active?'is-active':''} aria-current={active?'page':undefined}><span><Icon size={18}/></span><div><strong>{item.label}</strong><small>{item.description}</small></div><ChevronRight size={15}/></button>})}<div className="ps6-policy"><BookOpenCheck size={18}/><strong>One paper contract</strong><small>Blank, Bank, Import and AI all converge to the same document/editor pipeline.</small></div></aside>
+        <main className="ps6-main">{workspace==='home'&&<div className="ps6-home"><div className="ps6-main-head"><span>STUDIO HOME</span><h2>Start from the work, not from modules.</h2><p>Your live SaaS assignments and own papers determine what is available here.</p></div><div className="ps6-home-actions"><button onClick={()=>openWorkspace('create')} disabled={!contextLoading&&!contextError&&!assignments.length}><FileText size={20}/><strong>Create a paper</strong><small>Blank, Bank, own paper, import or AI.</small><ArrowRight size={16}/></button><button onClick={()=>openWorkspace('qbank')}><LibraryBig size={20}/><strong>Browse Question Bank</strong><small>Approved questions in assigned subjects.</small><ArrowRight size={16}/></button><button onClick={()=>openWorkspace('papers')}><FileStack size={20}/><strong>Continue My Papers</strong><small>{papers.length} own paper{papers.length===1?'':'s'} currently projected.</small><ArrowRight size={16}/></button></div><div className="ps6-recent"><div className="ps6-section-title"><span>RECENT OWN PAPERS</span><strong>Continue where you left off</strong></div>{papers.length?<div className="ps6-recent-grid">{papers.slice(0,4).map(p=><button key={p.id} onClick={()=>openWorkspace('papers')}><span><FileText size={16}/></span><div><strong>{p.name}</strong><small>{p.className||'Class'}{p.subjectName?` · ${p.subjectName}`:''}</small></div><ChevronRight size={14}/></button>)}</div>:<div className="ps6-empty">No saved paper belongs to this teacher account yet.</div>}</div></div>}
+          {workspace==='create'&&<>{<div className="ps6-main-head"><span>CREATE PAPER</span><h2>One authoring funnel</h2><p>Choose a source. Every path converges into one structured paper workspace.</p></div>}{createContent()}</>}
+          {workspace==='qbank'&&<><div className="ps6-main-head"><span>QUESTION BANK</span><h2>Approved questions for your teaching scope</h2><p>This is a selection library, not a separate paper editor.</p></div><QuestionBankBrowser/></>}
+          {workspace==='papers'&&<><div className="ps6-main-head"><span>MY PAPERS</span><h2>Your private teacher vault</h2><p>Only papers owned by your signed-in teacher identity are listed. SaaS Admin/Principal retains school-wide governance.</p></div><SavedPapersTab onLoadPaper={openPaper}/></>}
+        </main></div>
+    </div>
+  </DashboardLayout>
 }

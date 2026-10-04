@@ -777,7 +777,7 @@ function QuestionPanel({ subjectId, syllabusId, selectedChapters, paper, onPaper
  const [examDate, setExamDate] = useState(()=> overrideConfig?.examDate || new Date().toLocaleDateString('en-GB').replace(/\//g,'-'))
  const [printBub, setPrintBub] = useState(true)
  const [printAns, setPrintAns] = useState(false)
- const [modalOpen, setModalOpen] = useState(() => !(loadedPaper?.numberedQuestionTypes?.length))
+ const [modalOpen, setModalOpen] = useState(() => !loadedPaper)
 
  const [qType, setQType] = useState(questionTypes[0]?.value || 'mcq')
  const [priority, setPriority] = useState('all')
