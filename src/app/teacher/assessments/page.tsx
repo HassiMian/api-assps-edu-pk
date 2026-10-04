@@ -1,6 +1,8 @@
 "use client";
 
 import DashboardLayout from "@/components/DashboardLayout";
+import {PortalModuleHeading, PortalSupportNote} from '@/components/PortalModulePrimitives';
+import {schoolDateISO} from '@/lib/schoolDate';
 import api from "@/utils/api";
 import {
   BookOpen,
@@ -83,7 +85,7 @@ function SelectBox(props: SelectHTMLAttributes<HTMLSelectElement>) {
   return (
     <select
       {...props}
-      className="w-full rounded-xl border border-slate-700 bg-slate-800/60 px-4 py-3 text-white outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-500/30"
+      className="cw-field w-full"
     />
   );
 }
@@ -91,7 +93,8 @@ function SelectBox(props: SelectHTMLAttributes<HTMLSelectElement>) {
 export default function TeacherExamination() {
   const [classes, setClasses] = useState<TeachingClass[]>([]);
   const [classLabel, setClassLabel] = useState("");
-  const [subject, setSubject] = useState("Physics");
+  const [subject, setSubject] = useState("");
+  const [assignmentError,setAssignmentError] = useState('');
   const [session, setSession] = useState("2026-2027");
   const [examType, setExamType] = useState("Monthly Test");
   const [totalMarks, setTotalMarks] = useState("100");
@@ -103,7 +106,7 @@ export default function TeacherExamination() {
   const [toast, setToast] = useState<Toast>(null);
 
   const selectedClass = classes.find((item) => item.label === classLabel) || null;
-  const availableSubjects = selectedClass?.subjects?.length ? selectedClass.subjects : SUBJECTS;
+  const availableSubjects = !selectedClass ? [] : selectedClass.subjects.length ? selectedClass.subjects : SUBJECTS;
   useEffect(() => {
     let cancelled = false;
     api.get('/portal/teaching-options')
@@ -121,21 +124,22 @@ export default function TeacherExamination() {
           };
         }).filter((row: TeachingClass) => row.cls);
         setClasses(mapped);
+        setAssignmentError('');
         setClassLabel(mapped[0]?.label || '');
       })
       .catch(() => {
         if (!cancelled) {
           setClasses([]);
           setClassLabel('');
+          setAssignmentError('Could not fetch teacher assignments. Reload to distinguish missing classes from a service error.');
         }
       });
     return () => { cancelled = true; };
   }, []);
 
   useEffect(() => {
-    if (availableSubjects.length && !availableSubjects.includes(subject)) {
-      setSubject(availableSubjects[0]);
-    }
+    if (!availableSubjects.length) setSubject('');
+    else if (!availableSubjects.includes(subject)) setSubject(availableSubjects[0]);
     setStudents([]);
     setMarks({});
   }, [classLabel]);
@@ -144,7 +148,7 @@ export default function TeacherExamination() {
 
   const average = useMemo(() => {
     const values = Object.values(marks).filter(Boolean).map(Number);
-    if (!values.length || !Number(totalMarks)) return 0;
+    if (!values.length || !Number(totalMarks)) return null;
     return Math.round(values.reduce((sum, value) => sum + (value / Number(totalMarks)) * 100, 0) / values.length);
   }, [marks, totalMarks]);
 
@@ -204,7 +208,7 @@ export default function TeacherExamination() {
         session,
         total_marks: Number(totalMarks),
         pass_marks: Math.round(Number(totalMarks) * 0.33),
-        start_date: new Date().toISOString().slice(0, 10),
+        start_date: schoolDateISO(),
       });
 
       const examId = Number(examRes.data?.data?.id);
@@ -224,7 +228,8 @@ export default function TeacherExamination() {
         })
         .filter(Boolean);
 
-      await api.post("/admin/exams/results", { results });
+      const saveResponse = await api.post("/admin/exams/results", { results });
+      if (!saveResponse.data?.success) throw new Error(saveResponse.data?.message || 'Marks were not confirmed by the backend.');
 
       setSavedRows(
         results.map((row) => ({
@@ -248,6 +253,9 @@ export default function TeacherExamination() {
 
   return (
     <DashboardLayout role="teacher" title="Examination">
+      <PortalModuleHeading eyebrow="ACADEMIC ASSESSMENT" title="Marks and examinations" description="Choose a verified assigned class, enter marks carefully and publish only server-confirmed results."/>
+      {assignmentError&&<p className="cw-error mb-5" role="alert">{assignmentError}</p>}
+      {!assignmentError&&!classes.length&&<div className="mb-5"><PortalSupportNote>No class is linked to this teacher identity yet. School Admin can configure the class and subject assignments; unrelated classes are intentionally not shown.</PortalSupportNote></div>}
       {toast && (
         <div
           className={`fixed right-6 top-6 z-50 flex items-center gap-2 rounded-xl border px-5 py-3 text-sm font-semibold shadow-xl ${
@@ -261,10 +269,10 @@ export default function TeacherExamination() {
 
       <div className="mb-6 grid grid-cols-1 gap-4 md:grid-cols-4">
         {[
-          { label: "Selected Class", value: classLabel, icon: Users, color: "text-blue-400" },
-          { label: "Subject", value: subject, icon: BookOpen, color: "text-emerald-400" },
+          { label: "Selected Class", value: classLabel||'Not assigned', icon: Users, color: "text-blue-400" },
+          { label: "Subject", value: subject||'—', icon: BookOpen, color: "text-emerald-400" },
           { label: "Marks Entered", value: `${enteredCount}/${students.length || 0}`, icon: ClipboardList, color: "text-amber-400" },
-          { label: "Average", value: `${average}%`, icon: GraduationCap, color: "text-purple-400" },
+          { label: "Average", value: average===null?'—':`${average}%`, icon: GraduationCap, color: "text-purple-400" },
         ].map((stat) => (
           <div key={stat.label} className="glass-card p-5">
             <div className="flex items-center gap-3">
@@ -314,7 +322,8 @@ export default function TeacherExamination() {
           </Field>
 
           <Field step="2" label="Subject Select">
-            <SelectBox value={subject} onChange={(event) => setSubject(event.target.value)}>
+            <SelectBox value={subject} disabled={!selectedClass} onChange={(event) => setSubject(event.target.value)}>
+              {!availableSubjects.length&&<option value="">No assigned class selected</option>}
               {availableSubjects.map((item) => (
                 <option key={item}>{item}</option>
               ))}
@@ -343,7 +352,7 @@ export default function TeacherExamination() {
               min={1}
               value={totalMarks}
               onChange={(event) => setTotalMarks(event.target.value)}
-              className="w-full rounded-xl border border-slate-700 bg-slate-800/60 px-4 py-3 text-white outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-500/30"
+              className="cw-field w-full"
             />
           </Field>
         </div>
@@ -433,7 +442,7 @@ export default function TeacherExamination() {
 
             {/* Desktop Table View (hidden on small screens) */}
             <div className="hidden lg:block overflow-x-auto">
-              <table className="w-full text-sm">
+              <table className="cw-data-table">
                 <thead>
                   <tr className="border-b border-slate-700/50 text-xs uppercase text-slate-400">
                     <th className="px-5 py-4 text-left font-medium">Roll / GR</th>

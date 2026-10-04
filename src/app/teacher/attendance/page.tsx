@@ -1,6 +1,8 @@
 "use client";
 
 import DashboardLayout from '@/components/DashboardLayout';
+import { PortalModuleHeading, PortalSupportNote } from '@/components/PortalModulePrimitives';
+import { schoolDateISO } from '@/lib/schoolDate';
 import { motion } from 'framer-motion';
 import { MapPin, CheckCircle2, UserCheck, UserX, UserMinus, Loader2 } from 'lucide-react';
 import { useState, useEffect, useCallback } from 'react';
@@ -24,6 +26,8 @@ export default function TeacherAttendance() {
   const [classes, setClasses] = useState<{ class_name: string; section: string }[]>([]);
   const [selectedClass, setSelectedClass] = useState<{ class_name: string; section: string } | null>(null);
   const [loadingClasses, setLoadingClasses] = useState(true);
+  const [classLoadError,setClassLoadError] = useState('');
+  const [studentLoadError,setStudentLoadError] = useState('');
 
   const showToast = useCallback((msg: string, ok: boolean) => {
     setToast({ msg, ok });
@@ -37,17 +41,20 @@ export default function TeacherAttendance() {
       try {
         const res = await api.get('/portal/teaching-options');
         if (res.data.success && Array.isArray(res.data.data?.classes)) {
+          setClassLoadError('');
           const fetchedClasses = res.data.data.classes;
           setClasses(fetchedClasses);
           if (fetchedClasses.length > 0) {
             setSelectedClass(fetchedClasses[0]);
           }
         } else {
+          setClassLoadError('Class assignments could not be verified. Please try again.');
           setClasses([]);
           setSelectedClass(null);
         }
       } catch (error) {
         console.error("Failed to fetch teaching classes:", error);
+        setClassLoadError('Could not reach the assigned-class service. Please reload and retry.');
         setClasses([]);
         setSelectedClass(null);
       } finally {
@@ -60,7 +67,8 @@ export default function TeacherAttendance() {
   // Fetch students when the class changes
   useEffect(() => {
     const fetchStudents = async () => {
-      if (!selectedClass) return;
+      if (!selectedClass) {setStudents([]);setAttendance({});setStudentLoadError('');return;}
+      setStudents([]);setAttendance({});setStudentLoadError('');
       try {
         const res = await api.get('/students', {
           params: {
@@ -69,18 +77,17 @@ export default function TeacherAttendance() {
             section: selectedClass.section
           }
         });
-        if (res.data.success) {
+        if (res.data?.success && Array.isArray(res.data?.data)) {
           setStudents(res.data.data);
-          
           setAttendance({});
         } else {
-          setStudents([]);
-          setAttendance({});
+          setStudentLoadError('Class roster could not be verified. Attendance is unavailable.');
+          setStudents([]);setAttendance({});
         }
       } catch (error) {
         console.error("Failed to fetch students", error);
-        setStudents([]);
-        setAttendance({});
+        setStudentLoadError('Failed to load this class roster. Please switch classes or reload.');
+        setStudents([]);setAttendance({});
       }
     };
     fetchStudents();
@@ -93,7 +100,7 @@ export default function TeacherAttendance() {
   const submitAttendance = async () => {
     setSubmitting(true);
     try {
-      const date = new Date().toISOString().split('T')[0];
+      const date = schoolDateISO();
       const records = Object.entries(attendance).map(([student_id, status]) => ({
         student_id: parseInt(student_id),
         date,
@@ -105,7 +112,7 @@ export default function TeacherAttendance() {
         marked_by: user?.id
       });
 
-      if (res.data.success) {
+      if (res.data?.success) {
         showToast("Attendance submitted successfully!", true);
       } else {
         showToast("Submission failed. Please try again.", false);
@@ -122,36 +129,15 @@ export default function TeacherAttendance() {
 
   return (
     <DashboardLayout role="teacher" title="Daily Attendance">
+      <PortalModuleHeading eyebrow="CLASS REGISTER" title="Daily attendance" description="Record actual student presence for your server-assigned classes. School date follows Pakistan Standard Time."/>
+      {classLoadError&&<p role="alert" className="cw-error mb-4">{classLoadError}</p>}
+      {studentLoadError&&<p role="alert" className="cw-error mb-4">{studentLoadError}</p>}
       {toast && (
         <div className={`fixed top-6 right-6 z-50 px-5 py-3 rounded-xl text-sm font-semibold shadow-xl transition-all ${toast.ok ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30' : 'bg-red-500/10 text-red-400 border border-red-500/30'}`}>
           {toast.msg}
         </div>
       )}
-      <div className="mb-8">
-        <motion.div 
-          initial={{ opacity: 0, y: -10 }}
-          animate={{ opacity: 1, y: 0 }}
-          className={`p-4 rounded-xl flex items-center gap-4 ${
-            'bg-blue-500/10 border border-blue-500/20'
-          }`}
-        >
-          <div className={`p-2 rounded-lg ${
-            'bg-blue-500/20 text-blue-400'
-          }`}>
-            <MapPin className="w-6 h-6" />
-          </div>
-          <div>
-            <h3 className={`font-bold ${
-              'text-blue-300'
-            }`}>
-              Class Authorization Active
-            </h3>
-            <p className="text-slate-400 text-sm mt-0.5">
-              Attendance is restricted by your server-side class assignments. Geofence verification is not configured yet.
-            </p>
-          </div>
-        </motion.div>
-      </div>
+      <div className="mb-6"><PortalSupportNote>Attendance access is restricted by real teacher-class assignments. Geofence verification is not configured; the school should not treat this page as location-verified attendance.</PortalSupportNote></div>
 
       <div className="glass-card overflow-hidden">
         <div className="p-6 border-b border-slate-700/50 flex justify-between items-center">
@@ -182,7 +168,7 @@ export default function TeacherAttendance() {
             ) : (
               <h3 className="text-xl font-bold text-white">No assigned classes yet</h3>
             )}
-            <p className="text-slate-400 text-xs mt-1">Date: {new Date().toLocaleDateString()}</p>
+            <p className="text-slate-400 text-xs mt-1">School date: {schoolDateISO()} · {Object.keys(attendance).length}/{students.length} students marked</p>
           </div>
           <button 
             onClick={submitAttendance}
@@ -190,7 +176,7 @@ export default function TeacherAttendance() {
             className="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-medium py-2.5 px-6 rounded-xl transition-colors flex items-center gap-2"
           >
             {submitting ? <Loader2 className="w-5 h-5 animate-spin" /> : <CheckCircle2 className="w-5 h-5" />}
-            Submit Attendance
+            Submit {Object.keys(attendance).length} marked
           </button>
         </div>
 
@@ -211,6 +197,7 @@ export default function TeacherAttendance() {
                   <div className="grid grid-cols-3 gap-2">
                     <button 
                       onClick={() => markStudent(student.id, 'present')}
+                              aria-pressed={attendance[student.id] === 'present'}
                       className={`py-2 rounded-lg flex flex-col items-center justify-center gap-1 transition-colors text-xs font-semibold ${
                         attendance[student.id] === 'present' ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/50 shadow-[0_0_10px_rgba(16,185,129,0.2)]' : 'bg-slate-900/50 text-slate-400 hover:bg-slate-700 border border-transparent'
                       }`}
@@ -219,6 +206,7 @@ export default function TeacherAttendance() {
                     </button>
                     <button 
                       onClick={() => markStudent(student.id, 'absent')}
+                              aria-pressed={attendance[student.id] === 'absent'}
                       className={`py-2 rounded-lg flex flex-col items-center justify-center gap-1 transition-colors text-xs font-semibold ${
                         attendance[student.id] === 'absent' ? 'bg-red-500/20 text-red-400 border border-red-500/50 shadow-[0_0_10px_rgba(239,68,68,0.2)]' : 'bg-slate-900/50 text-slate-400 hover:bg-slate-700 border border-transparent'
                       }`}
@@ -227,6 +215,7 @@ export default function TeacherAttendance() {
                     </button>
                     <button 
                       onClick={() => markStudent(student.id, 'leave')}
+                              aria-pressed={attendance[student.id] === 'leave'}
                       className={`py-2 rounded-lg flex flex-col items-center justify-center gap-1 transition-colors text-xs font-semibold ${
                         attendance[student.id] === 'leave' ? 'bg-amber-500/20 text-amber-400 border border-amber-500/50 shadow-[0_0_10px_rgba(245,158,11,0.2)]' : 'bg-slate-900/50 text-slate-400 hover:bg-slate-700 border border-transparent'
                       }`}
@@ -241,8 +230,8 @@ export default function TeacherAttendance() {
 
           {/* Desktop Table View (hidden on small screens) */}
           <div className="hidden md:block overflow-x-auto">
-            <table className="w-full text-left text-sm text-slate-300">
-                <thead className="bg-slate-800/80 text-slate-400 font-medium">
+            <table className="cw-data-table">
+                <thead>
                   <tr>
                     <th className="px-6 py-4">Roll No</th>
                     <th className="px-6 py-4">Student Name</th>
@@ -265,6 +254,7 @@ export default function TeacherAttendance() {
                           <div className="flex justify-end gap-2">
                             <button 
                               onClick={() => markStudent(student.id, 'present')}
+                              aria-pressed={attendance[student.id] === 'present'}
                               className={`p-2 rounded-lg flex items-center gap-1 transition-colors ${
                                 attendance[student.id] === 'present' ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/50 shadow-[0_0_10px_rgba(16,185,129,0.2)]' : 'bg-slate-800 text-slate-400 hover:bg-slate-700 border border-transparent'
                               }`}
@@ -273,6 +263,7 @@ export default function TeacherAttendance() {
                             </button>
                             <button 
                               onClick={() => markStudent(student.id, 'absent')}
+                              aria-pressed={attendance[student.id] === 'absent'}
                               className={`p-2 rounded-lg flex items-center gap-1 transition-colors ${
                                 attendance[student.id] === 'absent' ? 'bg-red-500/20 text-red-400 border border-red-500/50 shadow-[0_0_10px_rgba(239,68,68,0.2)]' : 'bg-slate-800 text-slate-400 hover:bg-slate-700 border border-transparent'
                               }`}
@@ -281,6 +272,7 @@ export default function TeacherAttendance() {
                             </button>
                             <button 
                               onClick={() => markStudent(student.id, 'leave')}
+                              aria-pressed={attendance[student.id] === 'leave'}
                               className={`p-2 rounded-lg flex items-center gap-1 transition-colors ${
                                 attendance[student.id] === 'leave' ? 'bg-amber-500/20 text-amber-400 border border-amber-500/50 shadow-[0_0_10px_rgba(245,158,11,0.2)]' : 'bg-slate-800 text-slate-400 hover:bg-slate-700 border border-transparent'
                               }`}

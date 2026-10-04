@@ -2,8 +2,9 @@
 
 import DashboardLayout from '@/components/DashboardLayout';
 import { motion } from 'framer-motion';
-import { UserPlus, Shield, MoreVertical, Search, Lock, X, Eye, EyeOff } from 'lucide-react';
-import { useState, useEffect } from 'react';
+import { UserPlus, Shield, Search, Lock, X, Eye, EyeOff, KeyRound, UsersRound, RefreshCw } from 'lucide-react';
+import { useState, useEffect, useMemo } from 'react';
+import { PortalModuleHeading, PortalSubheading, PortalSupportNote } from '@/components/PortalModulePrimitives';
 import api from '@/utils/api';
 import { useAuth } from '@/context/AuthContext';
 
@@ -37,6 +38,8 @@ type ActivationCredential = { id: number; role: string; loginId: string; tempora
 
 export default function AdminUsers() {
   const [users, setUsers] = useState<UserData[]>([]);
+  const [search, setSearch] = useState('');
+  const [userLoadError, setUserLoadError] = useState('');
   const { user } = useAuth();
   const [missing, setMissing] = useState<{students: MissingIdentity[]; teachers: MissingIdentity[]}>({ students: [], teachers: [] });
   const [issued, setIssued] = useState<IssuedIdentity[] | null>(null);
@@ -162,9 +165,10 @@ export default function AdminUsers() {
         status: u.is_active ? 'Active' : 'Inactive',
       }));
       setUsers(identities);
+      setUserLoadError('');
     } catch (error) {
       console.error("Failed to fetch users", error);
-      setUsers([]);
+      setUserLoadError('Unable to load school users. Please retry.');
     }
   };
 
@@ -206,33 +210,24 @@ export default function AdminUsers() {
     setLoading(false);
   };
 
+  const matchingUsers = useMemo(() => users.filter(u => [u.name,u.email,u.role,u.status].some(value => String(value||'').toLowerCase().includes(search.trim().toLowerCase()))), [users,search]);
+  const activeUsers = useMemo(() => users.filter(u => u.status === 'Active').length, [users]);
   if (!user) return null;
 
   return (
     <DashboardLayout role="admin" title="User Management">
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-8">
-        <div className="relative flex-1 max-w-md">
-          <Search className="w-5 h-5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-          <input 
-            type="text" 
-            placeholder="Search users..." 
-            className="w-full bg-slate-800/50 border border-slate-700 text-white rounded-xl pl-10 pr-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500"
-          />
-        </div>
-        <button 
-          onClick={() => { setShowAddModal(true); setError(''); setSuccess(''); }} 
-          className="bg-blue-600 hover:bg-blue-500 text-white font-medium py-2.5 px-6 rounded-xl flex items-center gap-2 transition-colors shadow-lg shadow-blue-500/20"
-        >
-          <UserPlus className="w-5 h-5" />
-          Add Admin
-        </button>
+      <PortalModuleHeading eyebrow="IDENTITY & TRUST" title="People and access" description="A clear view of the school's portal users, linked identities and verified private credential handoffs."
+        actions={<button type="button" onClick={() => { setShowAddModal(true); setError(''); setSuccess(''); }} className="cw-module-primary"><UserPlus size={17}/> Add administrator</button>}>
+        <div className="mt-4 flex flex-wrap gap-2 text-[11px] font-bold text-[#56695b]"><span className="rounded-full border border-[#d9e6d8] bg-white px-3 py-1.5">{users.length} total users</span><span className="rounded-full border border-[#d9e6d8] bg-white px-3 py-1.5">{activeUsers} active</span><span className="rounded-full border border-[#e9dcbf] bg-[#fffaf0] px-3 py-1.5">{activations.filter(a => a.state !== 'delivered').length} handoffs to review</span></div>
+      </PortalModuleHeading>
+      <div className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-[16px] border border-[#e4e8e1] bg-white p-3 sm:p-4">
+        <label className="relative flex-1 min-w-[180px] max-w-xl"><span className="sr-only">Search portal users</span><Search size={17} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#708476]"/><input type="search" value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search name, login, role or status" className="cw-field w-full pl-10" /></label>
+        <button type="button" onClick={()=>{fetchAllUsers(); loadMissing(); loadActivations();}} className="cw-module-secondary"><RefreshCw size={15}/> Refresh records</button>
       </div>
+      {userLoadError&&<p role="alert" className="cw-error mb-5">{userLoadError}</p>}
 
       <section className="glass-card p-5 mb-6 space-y-4" aria-label="Missing portal identities">
-        <div>
-          <h2 className="text-lg font-semibold text-white">Portal login reconciliation</h2>
-          <p className="text-sm text-slate-400">Repair one linked student or teacher record at a time. Newly issued temporary credentials appear once; hand them to the correct family or teacher privately.</p>
-        </div>
+        <PortalSubheading eyebrow="ACCOUNT RECONCILIATION" title="Unlinked school identities" description="Repair only verified student, parent or teacher records. Never assume guardians share accounts because their contact numbers match."/>
         {repairError && <p role="alert" className="text-sm text-red-400">{repairError}</p>}
         <p className="text-sm text-slate-300">Students needing repair: {missing.students.length} · Teachers needing repair: {missing.teachers.length}</p>
         <div className="max-h-64 overflow-y-auto space-y-2">
@@ -289,8 +284,7 @@ export default function AdminUsers() {
       </section>
 
       <section className="glass-card p-5 mb-6 space-y-4" aria-label="Pending portal activation">
-        <h2 className="text-lg font-semibold text-white">Verified credential handoff</h2>
-        <p className="text-sm text-slate-400">Prepared accounts have unknown random passwords until you verify the actual recipient and issue a one-time activation credential. Never send shared family credentials through public groups.</p>
+        <PortalSubheading eyebrow="SECURE ACTIVATION" title="Verified credential handoff" description="Prepared accounts have unknown random passwords until you verify each recipient. Deliver one-time credentials privately, never in school-wide groups."/>
         <p className="text-sm text-slate-300">Pending: {activations.filter(a=>a.state==='pending').length} · Issued, not confirmed: {activations.filter(a=>a.state==='issued').length} · Delivered: {activations.filter(a=>a.state==='delivered').length}</p>
         {activationCredential && <div className="border border-amber-500/40 rounded-xl p-4 bg-slate-900 space-y-2">
           <p className="font-semibold text-amber-300">One-time credential — private handoff only</p>
@@ -311,10 +305,11 @@ export default function AdminUsers() {
         </div>
       </section>
 
-      <div className="glass-card overflow-hidden">
-        <div className="overflow-x-auto relative min-h-[300px]">
-          <table className="w-full text-left text-sm text-slate-300">
-              <thead className="bg-slate-800/80 text-slate-400 font-medium">
+      <section className="glass-card overflow-hidden" aria-label="School user directory">
+        <div className="p-5 sm:p-6 border-b border-[#e7eae3]"><PortalSubheading eyebrow="DIRECTORY" title="School portal users" description={`${matchingUsers.length} matching users. Role permissions are enforced by the server, not this visual table.`}/></div>
+        <div className="overflow-x-auto relative min-h-[250px]">
+          <table className="cw-data-table">
+              <thead>
                 <tr>
                   <th className="px-6 py-4">Name & Email</th>
                   <th className="px-6 py-4">Role</th>
@@ -324,55 +319,45 @@ export default function AdminUsers() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-700/50">
-                {users.length === 0 ? (
+                {matchingUsers.length === 0 ? (
                   <tr>
                     <td colSpan={5} className="px-6 py-8 text-center text-slate-500">
-                      No users found.
+                      {search.trim() ? 'No users match this search.' : 'No linked portal users were returned.'}
                     </td>
                   </tr>
                 ) : (
-                  users.map((u) => (
+                  matchingUsers.map((u) => (
                     <motion.tr 
                       key={u.id}
                       initial={{ opacity: 0 }}
                       animate={{ opacity: 1 }}
-                      className="hover:bg-slate-800/30 transition-colors"
+                      className="transition-colors"
                     >
                       <td className="px-6 py-4">
                         <div className="font-medium text-white">{u.name}</div>
                         <div className="text-xs text-slate-400">{u.email}</div>
                       </td>
                       <td className="px-6 py-4">
-                        <span className="px-3 py-1 rounded-full bg-slate-700/50 text-slate-300 text-xs font-medium border border-slate-600">
+                        <span className="inline-flex rounded-full border border-[#dbe4dc] bg-[#f1f5ef] px-3 py-1 text-[11px] font-semibold capitalize text-[#465a4b]">
                           {u.role}
                         </span>
                       </td>
                       <td className="px-6 py-4">
-                        <span className={`px-2.5 py-1 rounded-full text-xs font-medium border ${
-                          u.status === 'Active' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : 
-                          'bg-red-500/10 text-red-400 border-red-500/20'
-                        }`}>
-                          {u.status}
-                        </span>
+                        <span className="cw-status" data-status={u.status==='Active'?'active':'inactive'}>{u.status}</span>
                       </td>
                       <td className="px-6 py-4">
-                        <button title="Coming soon" onClick={undefined} className="flex items-center gap-2 text-xs font-medium text-blue-400 bg-blue-500/10 hover:bg-blue-500/20 px-3 py-1.5 rounded-lg transition-colors border border-blue-500/20">
-                          <Shield className="w-3.5 h-3.5" />
-                          Manage Access
-                        </button>
+                        <span title="Actual permissions are enforced by the role-scoped API" className="inline-flex items-center gap-2 text-[11px] font-semibold text-[#466754]"><Shield size={15} aria-hidden="true"/> Role-based</span>
                       </td>
                       <td className="px-6 py-4 text-right">
                         <div className="flex justify-end gap-2">
                           <button 
-                            title="Reset Password" 
+                            title="Set a new password" aria-label={`Set password for ${u.name}`} 
                             onClick={() => { setShowPasswordModal(u.email); setError(''); setSuccess(''); }} 
                             className="p-2 bg-slate-800 hover:bg-slate-700 rounded-lg text-slate-300 transition-colors"
                           >
                             <Lock className="w-4 h-4" />
                           </button>
-                          <button title="Coming soon" onClick={undefined} className="p-2 bg-slate-800 hover:bg-slate-700 rounded-lg text-slate-300 transition-colors">
-                            <MoreVertical className="w-4 h-4" />
-                          </button>
+
                         </div>
                       </td>
                     </motion.tr>
@@ -381,11 +366,11 @@ export default function AdminUsers() {
               </tbody>
           </table>
         </div>
-      </div>
+      </section>
 
       {showAddModal && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
-          <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="bg-slate-900 border border-slate-700 rounded-2xl p-6 w-full max-w-md shadow-2xl">
+        <div className="cw-modal-backdrop" role="presentation">
+          <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="cw-modal-panel max-w-md" role="dialog" aria-modal="true" aria-label="Create administrator">
             <div className="flex justify-between items-center mb-6 border-b border-slate-800 pb-4">
               <h3 className="text-lg font-bold text-white">Issue Login Credentials</h3>
               <button onClick={() => setShowAddModal(false)} className="text-slate-400 hover:text-white"><X className="w-5 h-5" /></button>
@@ -427,8 +412,8 @@ export default function AdminUsers() {
       )}
 
       {showPasswordModal && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
-          <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="bg-slate-900 border border-slate-700 rounded-2xl p-6 w-full max-w-sm shadow-2xl">
+        <div className="cw-modal-backdrop" role="presentation">
+          <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="cw-modal-panel max-w-sm" role="dialog" aria-modal="true" aria-label="Set user password">
             <div className="flex justify-between items-center mb-6 border-b border-slate-800 pb-4">
               <h3 className="text-lg font-bold text-white">Reset Password</h3>
               <button onClick={() => setShowPasswordModal(null)} className="text-slate-400 hover:text-white"><X className="w-5 h-5" /></button>

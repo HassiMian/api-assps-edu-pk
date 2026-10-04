@@ -95,3 +95,25 @@ Compare 375/768/1024/1440px browser screenshots including dark-to-light form isl
 ### V3.1 production post-release route matrix
 
 On build `FY6kcFkFX439ZDyIbdAlj`, a synthetic tenant was used to authenticate all four portal roles against the actual backend. All four dashboard GETs and the **33 fixed child routes** returned HTTP 200: Admin 17, Teacher 8, Student 5 and Parent 3. Each role's navigation attempt into a different portal redirected with HTTP 307. Synthetic school/users were deleted after the test. This extends, rather than replaces, the earlier 16-route preview gate. Dynamic exam detail (`/student/online-test/[examId]`) requires an actual generated exam fixture and was not included in this fixed-route matrix.
+
+## V3.2 — P1 operational modules (live 2026-10-04)
+
+### Scope and architecture
+Five workflow-critical screens now share `PortalModulePrimitives.tsx` (editorial section heading, subheading and contextual support note), with semantic `.cw-module-*`, `.cw-field`, `.cw-data-table`, and `.cw-modal-*` classes scoped to the Connect shell. Existing user/fee/student/attendance/exam endpoints and tenant permissions were preserved. This is a deliberate per-module migration, not global replacement of Tailwind colours.
+
+1. **Admin Users**: searchable server-returned user directory, real status labels, nonfunctional access-control/overflow actions removed, refresh control, high-contrast responsive table, separate secure handoff/reconciliation hierarchy, light create/reset modal surfaces. Actual role permissions remain backend owned.
+2. **Admin Students**: removes the serious old optimistic local creation/update/delete on failed API requests, fake time-based student IDs and invented 100% attendance. Only server-confirmed writes followed by a refresh update the UI; failed changes surface an error in the active editor. The export action is truthfully disabled until implemented. Attendance aggregate shows em dash when unavailable.
+3. **Admin Finance**: independently tracked fee and proof readiness with retry/error, no Axios catch-to-empty fallback, no false zero when either source is unavailable, server-confirmed approval and bulk generation, readable data tables and modal surfaces. Production feeRoutes also returns 503 rather than mock data when DB unavailable (`ALLOW_MOCK_FALLBACK` only applies outside NODE_ENV production).
+4. **Teacher Attendance**: school-local `Asia/Karachi` date rather than UTC rollover; separates assignment-service error from genuine no-class state, separates roster error from genuine zero students, clear marked-count before submission and `aria-pressed` on all six present/absent/leave mobile/desktop controls. Geofence is explicitly described as not configured.
+5. **Teacher Assessments**: no misleading default Physics when no class assigned, no invented 0% average with zero marks, school-local exam date, and results are shown as saved only after the server confirms submission. Assigned classes are still authoritative.
+
+### V3.2 acceptance evidence
+- Isolated Next 16.2.6 production build exit 0; TypeScript passed. New build ID `pSomSq5MQnpsmkDsEU9K5` is live on the green service behind the existing Nginx route to port 3002; previous V3.1 folder preserved as `.next-candidate-before-p1-20261004` for rollback.
+- Full synthetic authorized route smoke: Admin 17, Teacher 8, Student 5, Parent 3 fixed inner pages all HTTP 200, four dashboard pages HTTP 200 and cross-role requests 307 redirected. Synthetic test identities cleaned up after execution.
+- Existing token palette contrast checker 22/22 PASS, new P1 source-integrity checker 10/10 PASS (`scripts/check-connect-p1-integrity.mjs`). Pakistan-date UTC boundary checks PASS: `2026-10-04T18:59Z` maps to October 4 and `2026-10-04T19:01Z` maps to October 5 for Asia/Karachi.
+- No backend migrations or actual school student/finance/teacher mark writes were made for V3.2. The source-only authenticated API-contract creation script was blocked by external safety checks and was not bypassed; backend `/fees` and `/pending-proofs` success/503 response shapes were inspected read-only.
+
+### Unfinished, explicitly not claimed as complete
+- Manual authenticated screenshots and browser/keyboard/axe review of every state and dialog at 375/768/1024/1440px; a static colour token PASS cannot certify all nested runtime contrast.
+- P2 Parent Finance/Reports and Student Exams/Quiz/Homework, followed by high-density Admin Teachers, Announcements, setup and Teacher report-card workflows. Their route availability is tested but complete individual visual migration is not.
+- Detail flows with real exam fixtures and full mutation integration tests must be independently reviewed before declaring application-wide pixel-perfect/production-ready UI.

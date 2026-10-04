@@ -1,6 +1,7 @@
 "use client";
 
 import DashboardLayout from '@/components/DashboardLayout';
+import {PortalModuleHeading} from '@/components/PortalModulePrimitives';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useState, useEffect } from 'react';
 import api from '@/utils/api';
@@ -37,6 +38,7 @@ export default function StudentManagement() {
   const [editingStudent, setEditingStudent] = useState<Student | null>(null);
   const [formData, setFormData] = useState<Partial<Student>>({});
   const [saving, setSaving] = useState(false);
+  const [apiError, setApiError] = useState('');
   const [deleteId, setDeleteId] = useState<string | null>(null);
 
   // Bulk Import State
@@ -58,8 +60,9 @@ export default function StudentManagement() {
           parentPhone: s.parent_phone || s.phone || s.parentPhone || '-',
         }));
         setStudents(mapped);
-      } else { console.error("API error"); }
-    } catch (err) { console.error("Network error:", err); }
+        setApiError('');
+      } else { setApiError('The student register response was incomplete. Please retry.'); }
+    } catch (err: any) { setApiError(err?.response?.data?.message || 'The student register could not be loaded. Please retry.'); }
     finally { setLoading(false); }
   };
 
@@ -80,36 +83,29 @@ export default function StudentManagement() {
 
   const handleSave = async () => {
     if (!formData.name || !formData.email) return;
+    setSaving(true); setApiError('');
     try {
-      setSaving(true);
-      if (editingStudent) {
-        const res = await api.put(`/admin/students/${editingStudent.id}`, formData);
-        if (res.data.success) {
-          setStudents(prev => prev.map(s => s.id === editingStudent.id ? { ...s, ...formData } as Student : s));
-        }
-      } else {
-        const res = await api.post('/admin/students', formData);
-        if (res.data.success) setStudents(prev => [...prev, res.data.data]);
-        else {
-          const newStudent = { ...formData, id: Date.now().toString(), admissionDate: new Date().toISOString().split('T')[0], status: 'active' as const, attendance: 100, feeStatus: 'pending' as const } as Student;
-          setStudents(prev => [...prev, newStudent]);
-        }
-      }
+      const res = editingStudent
+        ? await api.put(`/admin/students/${editingStudent.id}`, formData)
+        : await api.post('/admin/students', formData);
+      if (!res.data?.success) throw new Error(res.data?.message || 'Student record was not saved.');
+      await fetchStudents();
       setShowModal(false); setEditingStudent(null); setFormData({});
-    } catch {
-      if (editingStudent) setStudents(prev => prev.map(s => s.id === editingStudent.id ? { ...s, ...formData } as Student : s));
-      else {
-        const newStudent = { ...formData, id: Date.now().toString(), admissionDate: new Date().toISOString().split('T')[0], status: 'active' as const, attendance: 100, feeStatus: 'pending' as const } as Student;
-        setStudents(prev => [...prev, newStudent]);
-      }
-      setShowModal(false); setEditingStudent(null); setFormData({});
+    } catch (err: any) {
+      setApiError(err?.response?.data?.message || err?.message || 'Save unsuccessful. The record was not changed locally.');
     } finally { setSaving(false); }
   };
 
   const handleDelete = async (id: string) => {
-    try { await api.delete(`/admin/students/${id}`); setStudents(prev => prev.filter(s => s.id !== id)); }
-    catch { setStudents(prev => prev.filter(s => s.id !== id)); }
-    setDeleteId(null);
+    setSaving(true); setApiError('');
+    try {
+      const res = await api.delete(`/admin/students/${id}`);
+      if (!res.data?.success) throw new Error(res.data?.message || 'Student deletion not confirmed.');
+      await fetchStudents();
+      setDeleteId(null);
+    } catch (err: any) {
+      setApiError(err?.response?.data?.message || err?.message || 'Delete unsuccessful; the student remains in the register.');
+    } finally { setSaving(false); }
   };
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -164,7 +160,7 @@ export default function StudentManagement() {
   };
 
   const openEdit = (student: Student) => { setEditingStudent(student); setFormData(student); setShowModal(true); };
-  const openAdd = () => { setEditingStudent(null); setFormData({ status: 'active', feeStatus: 'pending', attendance: 100 }); setShowModal(true); };
+  const openAdd = () => { setApiError(''); setEditingStudent(null); setFormData({ status: 'active', feeStatus: 'pending' }); setShowModal(true); };
 
   const statusColors: Record<string, string> = {
     active: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20',
@@ -181,12 +177,14 @@ export default function StudentManagement() {
 
   return (
     <DashboardLayout role="admin" title="Student Management">
+      <PortalModuleHeading eyebrow="ACADEMIC REGISTRY" title="Student records" description="Manage enrolment and linked family information. Changes appear only after the server confirms they were saved."/>
+      {apiError&&<div role="alert" className="cw-error mb-5 flex flex-wrap items-center justify-between gap-3"><span>{apiError}</span><button type="button" className="cw-module-secondary" onClick={fetchStudents}>Retry register</button></div>}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
         {[
           { label: 'Total Students', value: students.length, icon: Users, color: 'from-blue-500 to-cyan-400' },
           { label: 'Active', value: students.filter(s => s.status === 'active').length, icon: CheckCircle2, color: 'from-emerald-500 to-teal-400' },
           { label: 'Fee Overdue', value: students.filter(s => s.feeStatus === 'overdue').length, icon: AlertTriangle, color: 'from-red-500 to-rose-400' },
-          { label: 'Avg Attendance', value: `${Math.round(students.reduce((a, s) => a + s.attendance, 0) / (students.length || 1))}%`, icon: GraduationCap, color: 'from-purple-500 to-violet-400' },
+          { label: 'Avg Attendance', value: students.some(s=>typeof s.attendance==='number'&&Number.isFinite(s.attendance)) ? `${Math.round(students.filter(s=>typeof s.attendance==='number'&&Number.isFinite(s.attendance)).reduce((a,s)=>a+s.attendance,0)/students.filter(s=>typeof s.attendance==='number'&&Number.isFinite(s.attendance)).length)}%` : '—' , icon: GraduationCap, color: 'from-purple-500 to-violet-400' },
         ].map((stat, idx) => (
           <motion.div key={idx} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: idx * 0.08 }} className="glass-card p-5 flex items-center gap-4">
             <div className={`p-3 rounded-xl bg-gradient-to-br ${stat.color} bg-opacity-20`}><stat.icon className="w-6 h-6 text-white" /></div>
@@ -196,22 +194,22 @@ export default function StudentManagement() {
       </div>
 
       <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="flex flex-col md:flex-row gap-4 mb-6 items-center justify-between">
-        <div className="flex gap-3 w-full md:w-auto">
+        <div className="flex flex-wrap gap-3 w-full md:w-auto">
           <div className="relative flex-1 md:w-[400px]">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-            <input type="text" placeholder="Search by Name, Roll No, CNIC, B-Form, Phone..." value={search} onChange={(e) => setSearch(e.target.value)} className="w-full bg-slate-800/50 border border-slate-700 rounded-xl pl-10 pr-4 py-2.5 text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 placeholder-slate-500" />
+            <input type="text" placeholder="Search by Name, Roll No, CNIC, B-Form, Phone..." value={search} onChange={(e) => setSearch(e.target.value)} className="cw-field w-full pl-10" />
           </div>
-          <select value={filterGrade} onChange={(e) => setFilterGrade(e.target.value)} className="bg-slate-800/50 border border-slate-700 rounded-xl px-4 py-2.5 text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+          <select value={filterGrade} onChange={(e) => setFilterGrade(e.target.value)} className="cw-field">
             <option value="all">All Grades</option>
             {grades.map(g => <option key={g} value={g}>{g}</option>)}
           </select>
         </div>
         <div className="flex gap-3">
-          <button onClick={() => { setShowImportModal(true); setImportStatus(null); }} className="flex items-center gap-2 px-4 py-2.5 rounded-xl border border-blue-500/30 bg-blue-500/10 text-blue-400 text-sm font-bold hover:bg-blue-500/20 transition-colors">
+          <button onClick={() => { setShowImportModal(true); setImportStatus(null); }} className="cw-module-secondary">
             <UploadCloud className="w-4 h-4" /> Bulk Import
           </button>
-          <button className="flex items-center gap-2 px-4 py-2.5 rounded-xl border border-slate-700 text-slate-500 text-sm cursor-not-allowed opacity-50" title="Coming soon"><Download className="w-4 h-4" /> Export</button>
-          <motion.button whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }} onClick={openAdd} className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-blue-600 to-cyan-500 text-white text-sm font-bold shadow-lg shadow-blue-500/25 hover:shadow-blue-500/40 transition-all"><Plus className="w-4 h-4" /> Add Student</motion.button>
+          <button type="button" disabled aria-disabled="true" className="flex items-center gap-2 px-4 py-2.5 rounded-xl border border-slate-700 text-slate-500 text-sm cursor-not-allowed opacity-50" title="Export is not available yet"><Download className="w-4 h-4" /> Export</button>
+          <motion.button whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }} onClick={openAdd} className="cw-module-primary"><Plus className="w-4 h-4" /> Add Student</motion.button>
         </div>
       </motion.div>
 
@@ -220,7 +218,7 @@ export default function StudentManagement() {
           <div className="flex items-center justify-center py-20"><Loader2 className="w-8 h-8 text-blue-400 animate-spin" /></div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full text-sm">
+            <table className="cw-data-table">
               <thead>
                 <tr className="border-b border-slate-700/50 text-slate-400 text-left">
                   <th className="p-4 font-medium">Student</th>
@@ -277,10 +275,11 @@ export default function StudentManagement() {
 
       <AnimatePresence>
         {showModal && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-            <motion.div initial={{ opacity: 0, scale: 0.95, y: 20 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.95, y: 20 }} className="glass-card w-full max-w-2xl p-6 relative border-slate-600/50 max-h-[90vh] overflow-y-auto">
-              <button onClick={() => setShowModal(false)} className="absolute top-4 right-4 text-slate-400 hover:text-white"><X className="w-5 h-5" /></button>
+          <div className="cw-modal-backdrop">
+            <motion.div initial={{ opacity: 0, scale: 0.95, y: 20 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.95, y: 20 }} className="cw-modal-panel glass-card w-full max-w-2xl relative" role="dialog" aria-modal="true" aria-label={editingStudent ? 'Edit student' : 'Add student'}>
+              <button type="button" aria-label="Close student editor" onClick={() => setShowModal(false)} className="absolute top-4 right-4 text-slate-400 hover:text-white"><X className="w-5 h-5" /></button>
               <h3 className="text-xl font-bold text-white mb-6">{editingStudent ? 'Edit Student' : 'Add New Student'}</h3>
+              {apiError&&<p className="cw-error mb-4" role="alert">{apiError}</p>}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div><label className="block text-sm text-slate-400 mb-1">Full Name</label><input type="text" value={formData.name || ''} onChange={(e) => setFormData({ ...formData, name: e.target.value })} className="w-full bg-slate-800/50 border border-slate-700 rounded-xl px-4 py-2.5 text-white focus:outline-none focus:ring-2 focus:ring-blue-500" /></div>
                 <div><label className="block text-sm text-slate-400 mb-1">Email</label><input type="email" value={formData.email || ''} onChange={(e) => setFormData({ ...formData, email: e.target.value })} className="w-full bg-slate-800/50 border border-slate-700 rounded-xl px-4 py-2.5 text-white focus:outline-none focus:ring-2 focus:ring-blue-500" /></div>
@@ -306,7 +305,7 @@ export default function StudentManagement() {
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                     <div><label className="block text-sm text-slate-400 mb-1">Father CNIC</label><input type="text" placeholder="e.g. 12345-6789012-3" value={formData.father_cnic || ''} onChange={(e) => setFormData({ ...formData, father_cnic: e.target.value })} className="w-full bg-slate-800/50 border border-slate-700 rounded-xl px-4 py-2.5 text-white focus:outline-none focus:ring-2 focus:ring-blue-500" /></div>
                     <div><label className="block text-sm text-slate-400 mb-1">Student B-Form</label><input type="text" placeholder="e.g. 12345-6789012-3" value={formData.b_form || ''} onChange={(e) => setFormData({ ...formData, b_form: e.target.value })} className="w-full bg-slate-800/50 border border-slate-700 rounded-xl px-4 py-2.5 text-white focus:outline-none focus:ring-2 focus:ring-blue-500" /></div>
-                    <div><label className="block text-sm text-slate-400 mb-1">Family Code (Auto Disocunts)</label><input type="text" placeholder="e.g. FAM-1234" value={formData.family_code || ''} onChange={(e) => setFormData({ ...formData, family_code: e.target.value })} className="w-full bg-slate-800/50 border border-emerald-500/30 focus:border-emerald-500 rounded-xl px-4 py-2.5 text-emerald-400 font-mono focus:outline-none focus:ring-2 focus:ring-emerald-500" /></div>
+                    <div><label className="block text-sm text-slate-400 mb-1">Family Code</label><input type="text" placeholder="e.g. FAM-1234" value={formData.family_code || ''} onChange={(e) => setFormData({ ...formData, family_code: e.target.value })} className="w-full bg-slate-800/50 border border-emerald-500/30 focus:border-emerald-500 rounded-xl px-4 py-2.5 text-emerald-400 font-mono focus:outline-none focus:ring-2 focus:ring-emerald-500" /></div>
                   </div>
                 </div>
               </div>
@@ -321,14 +320,15 @@ export default function StudentManagement() {
 
       <AnimatePresence>
         {deleteId && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-            <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="glass-card w-full max-w-sm p-6 relative border-red-500/30">
+          <div className="cw-modal-backdrop">
+            <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="cw-modal-panel glass-card w-full max-w-sm relative" role="alertdialog" aria-modal="true" aria-label="Confirm student deletion">
               <div className="w-12 h-12 rounded-full bg-red-500/10 flex items-center justify-center mx-auto mb-4"><Trash2 className="w-6 h-6 text-red-400" /></div>
               <h3 className="text-lg font-bold text-white text-center mb-2">Delete Student?</h3>
               <p className="text-slate-400 text-sm text-center mb-6">This action cannot be undone. The student record will be permanently removed.</p>
+              {apiError&&<p role="alert" className="cw-error mb-4">{apiError}</p>}
               <div className="flex gap-3">
                 <button onClick={() => setDeleteId(null)} className="flex-1 py-2.5 rounded-xl border border-slate-700 text-slate-300 font-medium hover:bg-slate-800 transition-colors">Cancel</button>
-                <button onClick={() => handleDelete(deleteId)} className="flex-1 py-2.5 rounded-xl bg-red-600 hover:bg-red-500 text-white font-bold transition-colors">Delete</button>
+                <button disabled={saving} onClick={() => handleDelete(deleteId)} className="flex-1 py-2.5 rounded-xl bg-red-600 hover:bg-red-500 text-white font-bold transition-colors">Delete</button>
               </div>
             </motion.div>
           </div>
@@ -338,8 +338,8 @@ export default function StudentManagement() {
       {/* Bulk Import Modal */}
       <AnimatePresence>
         {showImportModal && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-            <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="glass-card w-full max-w-md p-6 relative border-slate-600/50">
+          <div className="cw-modal-backdrop">
+            <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="cw-modal-panel glass-card w-full max-w-md relative" role="dialog" aria-modal="true" aria-label="Import students">
               <button onClick={() => setShowImportModal(false)} className="absolute top-4 right-4 text-slate-400 hover:text-white"><X className="w-5 h-5" /></button>
               <h3 className="text-xl font-bold text-white mb-2">Bulk Import Students</h3>
               <p className="text-sm text-slate-400 mb-6">Upload a CSV file containing student data. Ensure headers include: Name, Class, Roll, Phone, Father CNIC, Family Code, B_Form.</p>

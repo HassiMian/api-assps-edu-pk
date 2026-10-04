@@ -1,6 +1,7 @@
 "use client";
 
 import DashboardLayout from '@/components/DashboardLayout';
+import {PortalModuleHeading, PortalSubheading} from '@/components/PortalModulePrimitives';
 import { Check, X, Eye, Search, CreditCard, X as XIcon, Receipt, RefreshCw, AlertCircle, CheckCircle2, FilePlus, Loader2 } from 'lucide-react';
 import { useState, useEffect, useCallback } from 'react';
 import api from '@/utils/api';
@@ -26,6 +27,9 @@ export default function AdminFinance() {
   const [allFees, setAllFees]         = useState<any[]>([]);
   const [feeStats, setFeeStats]       = useState({ paid: 0, pending: 0, pendingCount: 0 });
   const [loading, setLoading]         = useState(true);
+  const [financeError,setFinanceError] = useState('');
+  const [proofReady,setProofReady] = useState(false);
+  const [feeReady,setFeeReady] = useState(false);
   const [search, setSearch]           = useState('');
   const [viewProof, setViewProof]     = useState<Submission | null>(null);
   const [acting, setActing]           = useState<number | null>(null);
@@ -42,19 +46,27 @@ export default function AdminFinance() {
   };
 
   const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      const [proofRes, statsRes] = await Promise.all([
-        api.get('/fees/pending-proofs').catch(() => ({ data: { data: [] } })),
-        api.get('/fees').catch(() => ({ data: { data: [] } })),
-      ]);
-      setSubmissions(proofRes.data?.data || []);
-      const fees = statsRes.data?.data || [];
-      setAllFees(fees);
-      const paid    = fees.filter((f: any) => f.status === 'paid').reduce((s: number, f: any) => s + Number(f.amount || 0), 0);
-      const pending = fees.filter((f: any) => f.status !== 'paid').reduce((s: number, f: any) => s + Number(f.amount || 0), 0);
-      setFeeStats({ paid, pending, pendingCount: fees.filter((f: any) => f.status !== 'paid').length });
-    } catch { /* silent */ }
+    setLoading(true); setFinanceError('');
+    const [proofResult, feeResult] = await Promise.allSettled([
+      api.get('/fees/pending-proofs'),
+      api.get('/fees'),
+    ]);
+    let failures: string[] = [];
+    if(proofResult.status === 'fulfilled' && proofResult.value.data?.success && Array.isArray(proofResult.value.data?.data)){
+      setSubmissions(proofResult.value.data.data); setProofReady(true);
+    }else{
+      setSubmissions([]); setProofReady(false); failures.push('payment proofs');
+    }
+    if(feeResult.status === 'fulfilled' && feeResult.value.data?.success && Array.isArray(feeResult.value.data?.data)){
+      const fees = feeResult.value.data.data;
+      setAllFees(fees); setFeeReady(true);
+      const paid = fees.filter((f: any) => f.status === 'paid').reduce((total: number,f: any)=>total+Number(f.amount||0),0);
+      const pending = fees.filter((f: any) => f.status !== 'paid').reduce((total: number,f: any)=>total+Number(f.amount||0),0);
+      setFeeStats({paid,pending,pendingCount:fees.filter((f:any)=>f.status!=='paid').length});
+    }else{
+      setAllFees([]); setFeeReady(false); failures.push('fee records');
+    }
+    if(failures.length)setFinanceError(`Could not load ${failures.join(' and ')}. Missing results are not shown as zero. Please retry.`);
     setLoading(false);
   }, []);
 
@@ -63,12 +75,13 @@ export default function AdminFinance() {
   const handleAction = async (id: number, action: 'approve' | 'reject') => {
     setActing(id);
     try {
-      await api.put(`/fees/${id}/approve-proof`, { action });
+      const result = await api.put(`/fees/${id}/approve-proof`, { action });
+      if (!result.data?.success) throw new Error(result.data?.message || 'The approval action was not confirmed.');
       showAlert('success', action === 'approve' ? 'Fee approved and marked as paid!' : 'Proof rejected.');
       setViewProof(null);
       load();
     } catch (e: any) {
-      showAlert('error', e?.response?.data?.message || 'Action failed');
+      showAlert('error', e?.response?.data?.message || e?.message || 'Action failed');
     }
     setActing(null);
   };
@@ -77,6 +90,7 @@ export default function AdminFinance() {
     setBulkLoading(true);
     try {
       const res = await api.post('/fees/bulk', bulkData);
+      if (!res.data?.success) throw new Error(res.data?.message || 'Bulk challan generation was not confirmed.');
       showAlert('success', res.data?.message || 'Bulk challans generated successfully.');
       setShowBulkModal(false);
       load(); // Reload stats
@@ -93,6 +107,8 @@ export default function AdminFinance() {
 
   return (
     <DashboardLayout role="admin" title="Finance & Fee Approvals">
+      <PortalModuleHeading eyebrow="FINANCIAL OPERATIONS" title="Fees and approvals" description="Review payment evidence, generated challans and outstanding balances from verified school records."/>
+      {financeError&&<div role="alert" className="cw-error mb-5 flex flex-wrap items-center justify-between gap-3"><span>{financeError}</span><button type="button" onClick={load} className="cw-module-secondary"><RefreshCw size={15}/> Retry data</button></div>}
       {alert && (
         <div className={`fixed top-6 right-6 z-50 px-5 py-3 rounded-xl text-sm font-semibold shadow-xl border flex items-center gap-2
           ${alert.type === 'success' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30' : 'bg-red-500/10 text-red-400 border-red-500/30'}`}>
@@ -105,31 +121,31 @@ export default function AdminFinance() {
       <div className="grid grid-cols-1 md:grid-cols-3 gap-5 mb-8">
         <div className="glass-card p-6 border-l-4 border-l-amber-500">
           <p className="text-slate-400 text-sm">Pending Proof Approvals</p>
-          <h3 className="text-3xl font-bold text-white mt-1">{submissions.length}</h3>
+          <h3 className="text-3xl font-bold text-white mt-1">{proofReady?submissions.length:'—'}</h3>
         </div>
         <div className="glass-card p-6 border-l-4 border-l-emerald-500">
           <p className="text-slate-400 text-sm">Total Collected (Rs)</p>
-          <h3 className="text-3xl font-bold text-white mt-1">{feeStats.paid.toLocaleString()}</h3>
+          <h3 className="text-3xl font-bold text-white mt-1">{feeReady?feeStats.paid.toLocaleString():'—'}</h3>
         </div>
         <div className="glass-card p-6 border-l-4 border-l-red-500">
           <p className="text-slate-400 text-sm">Total Pending (Rs)</p>
-          <h3 className="text-3xl font-bold text-white mt-1">{feeStats.pending.toLocaleString()}</h3>
+          <h3 className="text-3xl font-bold text-white mt-1">{feeReady?feeStats.pending.toLocaleString():'—'}</h3>
         </div>
       </div>
 
       <div className="glass-card overflow-hidden">
         <div className="p-6 border-b border-slate-700/50 flex flex-wrap justify-between items-center gap-3">
-          <h3 className="text-xl font-bold text-white">Fee Proof Submissions</h3>
+          <div><p className="cw-eyebrow">PAYMENT EVIDENCE</p><h3 className="mt-1 font-serif text-xl font-semibold text-[#253b2c]">Fee proof submissions</h3><p className="mt-1 text-[12px] text-[#56685b]">Approve only evidence you have reviewed and verified.</p></div>
           <div className="flex items-center gap-3">
-            <button onClick={() => setShowBulkModal(true)} className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors text-sm font-semibold">
+            <button onClick={() => setShowBulkModal(true)} className="cw-module-primary">
               <FilePlus className="w-4 h-4" /> Bulk Generate
             </button>
             <div className="relative">
               <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
               <input type="text" placeholder="Search student..." value={search} onChange={e => setSearch(e.target.value)}
-                className="bg-slate-800/50 border border-slate-700 text-sm rounded-lg pl-9 pr-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                className="cw-field pl-9 min-w-[165px]" />
             </div>
-            <button onClick={load} className="p-2 bg-slate-800 hover:bg-slate-700 rounded-lg text-slate-400 transition-colors">
+            <button onClick={load} className="cw-module-secondary" title="Reload fee records" aria-label="Reload fee records">
               <RefreshCw className="w-4 h-4" />
             </button>
           </div>
@@ -137,6 +153,8 @@ export default function AdminFinance() {
 
         {loading ? (
           <div className="p-12 text-center text-slate-500">Loading...</div>
+        ) : !proofReady ? (
+          <div className="p-12 text-center text-[#925934]" role="status">Payment proof data is unavailable. Retry before approving any record.</div>
         ) : filtered.length === 0 ? (
           <div className="p-12 text-center">
             <CheckCircle2 className="w-10 h-10 text-emerald-400 mx-auto mb-3" />
@@ -144,8 +162,8 @@ export default function AdminFinance() {
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full text-left text-sm text-slate-300">
-              <thead className="bg-slate-800/80 text-slate-400 font-medium">
+            <table className="cw-data-table">
+              <thead>
                 <tr>
                   <th className="px-6 py-4">Student</th>
                   <th className="px-6 py-4">Month</th>
@@ -201,15 +219,11 @@ export default function AdminFinance() {
 
       {/* Defaulter Analytics */}
       <div className="glass-card overflow-hidden mt-8">
-        <div className="p-6 border-b border-slate-700/50">
-          <h3 className="text-xl font-bold text-white flex items-center gap-2">
-            <AlertCircle className="w-5 h-5 text-red-400" /> Defaulter Analytics
-          </h3>
-          <p className="text-sm text-slate-400 mt-1">Students with unpaid or partial fee challans.</p>
-        </div>
+        <div className="p-6 border-b border-[#e7eae3]"><PortalSubheading eyebrow="OUTSTANDING BALANCES" title="Pending fee ledger" description="Students with unpaid or partial fee challans. Balance figures reflect actual returned ledger data."/></div>
+        {!feeReady&&<div role="status" className="px-6 pt-5 text-[12px] text-[#915a23]">Fee ledger unavailable; balances are intentionally hidden until data loads.</div>}
         <div className="overflow-x-auto max-h-96">
-          <table className="w-full text-left text-sm text-slate-300">
-            <thead className="bg-slate-800/80 text-slate-400 font-medium sticky top-0 backdrop-blur-md z-10">
+          <table className="cw-data-table">
+            <thead className="sticky top-0 z-10">
               <tr>
                 <th className="px-6 py-4">Student</th>
                 <th className="px-6 py-4">Month/Year</th>
@@ -254,8 +268,8 @@ export default function AdminFinance() {
 
       {/* Proof Modal */}
       {viewProof && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-          <div className="glass-card w-full max-w-md p-6 relative border-slate-600/50">
+        <div className="cw-modal-backdrop">
+          <div className="cw-modal-panel glass-card w-full max-w-md relative" role="dialog" aria-modal="true">
             <button onClick={() => setViewProof(null)} className="absolute top-4 right-4 text-slate-400 hover:text-white">
               <XIcon className="w-5 h-5" />
             </button>
@@ -295,8 +309,8 @@ export default function AdminFinance() {
 
       {/* Bulk Generate Modal */}
       {showBulkModal && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-          <div className="glass-card w-full max-w-md p-6 relative border-slate-600/50">
+        <div className="cw-modal-backdrop">
+          <div className="cw-modal-panel glass-card w-full max-w-md relative" role="dialog" aria-modal="true">
             <button onClick={() => setShowBulkModal(false)} className="absolute top-4 right-4 text-slate-400 hover:text-white">
               <XIcon className="w-5 h-5" />
             </button>
