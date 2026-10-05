@@ -4,6 +4,7 @@ import RichTextField from './RichTextField'
 import EditorCanvasShell from './EditorCanvasShell'
 import { createPaperEditorExtensions, editorProseStyles } from './editorExtensions'
 import { useEditor, EditorContent } from '@tiptap/react'
+import { fetchPaperDeliveryManifest } from '../paperVaultService'
 
 const D = {
   bg: '#f6f8fa',
@@ -157,6 +158,8 @@ export default function PaperDocumentEditor({
   saveConflict = false,
   onReloadLatest,
   onLoadRevisionHistory,
+  deliveryRevision = null,
+  deliverySnapshotHash = '',
   paperSettings = {},
   language = 'english',
 }) {
@@ -168,6 +171,10 @@ export default function PaperDocumentEditor({
   const [historyLoading,setHistoryLoading]=useState(false)
   const [historyError,setHistoryError]=useState('')
   const [historyData,setHistoryData]=useState(null)
+  const [deliveryOpen,setDeliveryOpen]=useState(false)
+  const [deliveryLoading,setDeliveryLoading]=useState(false)
+  const [deliveryError,setDeliveryError]=useState('')
+  const [deliveryData,setDeliveryData]=useState(null)
   const [activeBlockId, setActiveBlockId] = useState(doc.blocks?.[0]?.id || null)
   const [activeEditor, setActiveEditor] = useState(null)
   const [isMobile, setIsMobile] = useState(false)
@@ -221,6 +228,39 @@ export default function PaperDocumentEditor({
     finally{setHistoryLoading(false)}
   }
 
+  const loadDeliveryManifest = async () => {
+    if (!loadedPaper?.id || !deliveryRevision || !deliverySnapshotHash) {
+      setDeliveryError('A verified saved revision is required before delivery can be evaluated.')
+      return
+    }
+    setDeliveryLoading(true)
+    setDeliveryError('')
+    try {
+      const manifest = await fetchPaperDeliveryManifest(loadedPaper.id, {
+        revision: deliveryRevision,
+        snapshotHash: deliverySnapshotHash,
+      })
+      setDeliveryData(manifest)
+    } catch (error) {
+      setDeliveryData(null)
+      setDeliveryError(error?.response?.data?.message || error?.message || 'Delivery capability could not be verified.')
+    } finally {
+      setDeliveryLoading(false)
+    }
+  }
+
+  const toggleDelivery = () => {
+    const next = !deliveryOpen
+    setDeliveryOpen(next)
+    if (next && !deliveryData && !deliveryLoading) loadDeliveryManifest()
+  }
+
+  useEffect(() => {
+    setDeliveryData(null)
+    setDeliveryError('')
+    setDeliveryOpen(false)
+  }, [deliveryRevision, deliverySnapshotHash, loadedPaper?.id])
+
   const meta = doc.meta || {}
   if (!compatibility.compatible) return (
     <section className="ps6-compatibility-gate" role="status" style={{padding:28,border:'1px solid #ccd8e0',borderRadius:16,background:'#f8fafb',color:'#17354a'}}>
@@ -241,6 +281,7 @@ export default function PaperDocumentEditor({
         </div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           {onSaveWorkingDocument&&<button type="button" onClick={()=>onSaveWorkingDocument(doc)} disabled={!dirty||saving||saveConflict} aria-label="Save changes" style={{padding:'10px 16px',borderRadius:10,border:'1px solid #0b2c4d',background:dirty&&!saving&&!saveConflict?'#0b2c4d':'#e7edf2',color:dirty&&!saving&&!saveConflict?'#fff':'#7b8c98',fontWeight:750,cursor:dirty&&!saving&&!saveConflict?'pointer':'not-allowed'}}>{saving?'Saving…':`Save changes${saveRevision?` · Rev ${saveRevision}`:''}`}</button>}
+          {loadedPaper?.id&&<button type="button" onClick={toggleDelivery} aria-expanded={deliveryOpen} style={{padding:'10px 14px',borderRadius:10,border:`1px solid ${D.border}`,background:deliveryOpen?'#e8eef3':'#fff',color:'#284b62',fontWeight:700,cursor:'pointer'}}>Delivery Center</button>}
           {onLoadRevisionHistory&&<button type="button" onClick={toggleHistory} aria-expanded={historyOpen} style={{padding:'10px 14px',borderRadius:10,border:`1px solid ${D.border}`,background:historyOpen?'#e8eef3':'#fff',color:'#284b62',fontWeight:700,cursor:'pointer'}}>Revision history</button>}
           <button type="button" disabled title="Canonical print parity is pending for this compatibility document" onClick={() => setBridgeError('Use validated canonical renderer for printing. Legacy Pro direct print is disabled to avoid missing questions.')} style={{ padding: '10px 16px', borderRadius: 10, border: '1px solid rgba(200,153,26,0.45)', background: 'rgba(200,153,26,0.14)', color: D.gold, cursor: 'pointer', fontWeight: 700 }}>
             Print
@@ -263,6 +304,25 @@ export default function PaperDocumentEditor({
 
       {saveNotice&&<div role="status" style={{padding:'10px 18px',background:'#edf7f0',color:'#23543d',borderBottom:'1px solid #c5dfcd',fontSize:12}}>{saveNotice}</div>}
       {saveError&&<div role="alert" style={{display:'flex',alignItems:'center',flexWrap:'wrap',gap:10,padding:'10px 18px',background:'#fff0ea',color:'#8c3d24',borderBottom:'1px solid #edc7b8',fontSize:12}}><span>{saveError}</span>{saveConflict&&onReloadLatest&&<button type="button" onClick={onReloadLatest} style={{padding:'7px 10px',borderRadius:8,background:'#fff',border:'1px solid #d6a18d',fontWeight:700}}>Reload latest (discard local edits)</button>}</div>}
+      {deliveryOpen&&<section aria-label="Revision delivery center" style={{padding:'13px 18px',borderBottom:`1px solid ${D.border}`,background:'#f7f9fb'}}>
+        <div style={{display:'flex',justifyContent:'space-between',gap:12,alignItems:'center',marginBottom:9}}>
+          <div><strong style={{fontSize:12,color:'#17354a'}}>Revision-bound Delivery Center</strong><div style={{fontSize:10,color:D.muted,marginTop:2}}>Every channel is evaluated against revision {deliveryRevision || '—'} and its verified snapshot hash.</div></div>
+          <button type="button" disabled={deliveryLoading} onClick={loadDeliveryManifest} style={{padding:'7px 10px',borderRadius:8,border:`1px solid ${D.border}`,background:'#fff',fontSize:10,fontWeight:700,color:D.silver,cursor:deliveryLoading?'wait':'pointer'}}>{deliveryLoading?'Verifying…':'Recheck'}</button>
+        </div>
+        {deliveryError&&<div role="alert" style={{padding:'9px 10px',border:'1px solid #ecc7b6',borderRadius:9,background:'#fff1eb',color:'#813b18',fontSize:10}}>{deliveryError}</div>}
+        {!deliveryError&&deliveryLoading&&<div role="status" style={{fontSize:10,color:D.muted}}>Verifying immutable revision and output capabilities…</div>}
+        {deliveryData&&<div>
+          <div style={{display:'flex',gap:8,flexWrap:'wrap',marginBottom:9}}>
+            <span style={{padding:'5px 8px',borderRadius:999,background:'#e8eef3',color:'#0b2c4d',fontSize:9,fontWeight:800}}>Rev {deliveryData.revision}</span>
+            <span style={{padding:'5px 8px',borderRadius:999,background:deliveryData.isCurrent?'#e4f3ed':'#f3eee2',color:deliveryData.isCurrent?'#1e6b4f':'#7a6330',fontSize:9,fontWeight:800}}>{deliveryData.isCurrent?'Current revision':'Historical revision'}</span>
+            <span title={deliveryData.deliveryKey} style={{padding:'5px 8px',borderRadius:999,background:'#f0f2f4',color:'#617482',fontSize:9}}>Key {String(deliveryData.deliveryKey||'').slice(0,10)}…</span>
+          </div>
+          <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(150px,1fr))',gap:8}}>
+            {[['Preview','preview'],['Print','print'],['PDF','pdf'],['Word','word'],['Online Test','onlineTest']].map(([label,key])=>{const channel=deliveryData.channels?.[key]||{};const available=String(channel.state||'').startsWith('available');return <div key={key} style={{padding:'10px 11px',border:'1px solid #dce4e9',borderRadius:10,background:'#fff'}}><div style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:8}}><strong style={{fontSize:10,color:'#25475d'}}>{label}</strong><span style={{fontSize:8,fontWeight:850,letterSpacing:'.08em',color:available?'#247054':'#9a5537'}}>{available?'AVAILABLE':'BLOCKED'}</span></div><div style={{fontSize:9,color:'#748692',lineHeight:1.45,marginTop:5}}>{channel.reason?String(channel.reason).replaceAll('_',' '):available?'Verified compatibility preview for this exact revision.':'Not available for this revision.'}</div>{key==='onlineTest'&&channel.content&&<div style={{fontSize:8,color:'#647986',marginTop:5}}>{channel.content.totalQuestions} questions · {channel.content.autoGradableQuestions} auto · {channel.content.manualReviewQuestions} manual · {channel.content.unsupportedQuestions} unsupported</div>}</div>})}
+          </div>
+          <div style={{marginTop:9,fontSize:9,color:'#70828f'}}>This panel does not grant canonical print or publish authority. Blocked channels stay disabled until the shared SaaS renderer/delivery adapter is independently verified.</div>
+        </div>}
+      </section>}
       {historyOpen&&<section aria-label="Revision history" style={{padding:'12px 18px',background:'#f8fafb',borderBottom:`1px solid ${D.border}`}}>
         <div style={{display:'flex',justifyContent:'space-between',gap:12,alignItems:'center',marginBottom:8}}><strong style={{fontSize:12,color:'#17354a'}}>Immutable revision history</strong>{historyData?.currentRevision&&<small style={{color:D.muted}}>Current revision {historyData.currentRevision}</small>}</div>
         {historyLoading&&<div role="status" style={{fontSize:11,color:D.muted}}>Loading verified history…</div>}

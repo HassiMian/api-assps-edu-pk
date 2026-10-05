@@ -121,3 +121,14 @@ export async function fetchProtectedPaperRevision(id, revision) {
   if (!data?.success || !data?.data) throw new Error(data?.message || 'Revision snapshot could not be loaded.')
   return data.data
 }
+
+export async function fetchPaperDeliveryManifest(id, { revision, snapshotHash } = {}) {
+  if (!isPaperVaultAvailable()) return null
+  if (!/^\d+$/.test(String(id || ''))) throw new Error('A valid saved paper ID is required for delivery.')
+  const { data } = await api.post(`/portal/paper-studio/papers/${encodeURIComponent(id)}/delivery-manifest`, {
+    revision,
+    snapshotHash,
+  })
+  if (!data?.success || !data?.data?.deliveryKey) throw new Error(data?.message || 'Delivery manifest could not be verified.')
+  return data.data
+}
