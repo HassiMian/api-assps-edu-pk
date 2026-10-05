@@ -1,19 +1,16 @@
 import { useEffect, useMemo, useState } from 'react'
-import { paperToDocument, documentToPaper } from './documentAdapters'
+import { classifyLegacyEditablePaper, legacyPaperToWorkingDocument, applyLegacyWorkingDocument } from './losslessLegacyBridge.mjs'
 import RichTextField from './RichTextField'
-import EditorRibbon from './EditorRibbon'
 import EditorCanvasShell from './EditorCanvasShell'
-import { printProDocument, exportProDocumentAsDocx } from './proExportUtils'
-import { exportProDocumentAsRealDocx } from './proDocxExport'
 import { createPaperEditorExtensions, editorProseStyles } from './editorExtensions'
 import { useEditor, EditorContent } from '@tiptap/react'
 
 const D = {
-  bg: '#071e34',
-  gold: '#C8991A',
-  silver: '#C0C8D8',
-  muted: '#8892A4',
-  border: 'rgba(148,163,184,0.18)',
+  bg: '#f6f8fa',
+  gold: '#0b2c4d',
+  silver: '#284b62',
+  muted: '#657d8d',
+  border: '#d9e2e8',
 }
 
 function BlockEditor({
@@ -25,6 +22,8 @@ function BlockEditor({
   setActiveEditor,
   onReorder,
   dragOverId,
+  allowReorder = false,
+  allowMarksEdit = true,
 }) {
   const isActive = activeBlockId === block.id
   const isDragTarget = dragOverId === block.id
@@ -54,16 +53,19 @@ function BlockEditor({
 
   return (
     <article
-      draggable
+      draggable={allowReorder}
       onDragStart={(e) => {
+        if (!allowReorder) { e.preventDefault(); return }
         e.dataTransfer.setData('text/plain', block.id)
         e.dataTransfer.effectAllowed = 'move'
       }}
       onDragOver={(e) => {
+        if (!allowReorder) return
         e.preventDefault()
         onReorder?.(block.id, 'over')
       }}
       onDrop={(e) => {
+        if (!allowReorder) return
         e.preventDefault()
         const fromId = e.dataTransfer.getData('text/plain')
         onReorder?.(fromId, block.id)
@@ -80,11 +82,11 @@ function BlockEditor({
     >
       <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start', marginBottom: 8 }}>
         <div
-          title="Drag to reorder"
-          style={{ cursor: 'grab', color: '#94a3b8', fontSize: 16, lineHeight: 1, paddingTop: 2, userSelect: 'none' }}
+          title="Source order locked until canonical editing"
+          style={{ cursor: 'default', color: '#94a3b8', fontSize: 16, lineHeight: 1, paddingTop: 2, userSelect: 'none' }}
           aria-hidden
         >
-          ⋮⋮
+          •
         </div>
         <header style={{ flex: 1, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, borderBottom: '2px solid #1a237e', paddingBottom: 8 }}>
           <input
@@ -97,6 +99,8 @@ function BlockEditor({
             Marks
             <input
               type="number"
+              disabled={!allowMarksEdit}
+              title={!allowMarksEdit ? 'Shared-category marks: edit through canonical editor when available' : undefined}
               min={0}
               value={block.marks}
               onChange={e => onBlockChange(block.id, { marks: Number(e.target.value) || 0 })}
@@ -142,12 +146,13 @@ export default function PaperDocumentEditor({
   paperSettings = {},
   language = 'english',
 }) {
-  const [doc, setDoc] = useState(() => paperToDocument(loadedPaper || {}))
+  const compatibility = useMemo(() => classifyLegacyEditablePaper(loadedPaper), [loadedPaper])
+  const [doc, setDoc] = useState(() => compatibility.compatible ? legacyPaperToWorkingDocument(loadedPaper) : {meta: {},blocks: []})
+  const [bridgeError, setBridgeError] = useState('')
   const [activeBlockId, setActiveBlockId] = useState(doc.blocks?.[0]?.id || null)
   const [activeEditor, setActiveEditor] = useState(null)
   const [isMobile, setIsMobile] = useState(false)
   const [dragOverId, setDragOverId] = useState(null)
-  const [exporting, setExporting] = useState(false)
   const isDual = language === 'dual' || language === 'mixed'
 
   useEffect(() => {
@@ -158,8 +163,17 @@ export default function PaperDocumentEditor({
   }, [])
 
   const persist = (nextDoc) => {
-    setDoc(nextDoc)
-    onPaperChange?.(documentToPaper(nextDoc, loadedPaper || {}))
+    if (!compatibility.compatible) return
+    try {
+      // Source paper is the immutable baseline; apply only representable edits.
+      // All omitted questions, options, bilingual provenance and unknown fields survive.
+      const nextPaper=applyLegacyWorkingDocument(nextDoc, loadedPaper)
+      setBridgeError('')
+      setDoc(nextDoc)
+      onPaperChange?.(nextPaper)
+    } catch(err) {
+      setBridgeError(err?.message || 'This change cannot be represented by the legacy paper format.')
+    }
   }
 
   const onBlockChange = (id, patch) => {
@@ -170,58 +184,40 @@ export default function PaperDocumentEditor({
     persist(next)
   }
 
-  const reorderBlocks = (fromId, toId) => {
-    setDragOverId(null)
-    if (!fromId || !toId || fromId === toId) return
-    const blocks = [...(doc.blocks || [])]
-    const fromIdx = blocks.findIndex(b => b.id === fromId)
-    const toIdx = blocks.findIndex(b => b.id === toId)
-    if (fromIdx < 0 || toIdx < 0) return
-    const [moved] = blocks.splice(fromIdx, 1)
-    blocks.splice(toIdx, 0, moved)
-    const renumbered = blocks.map((b, i) => ({ ...b, questionNo: i + 1 }))
-    persist({ ...doc, blocks: renumbered })
-  }
+  // Reordering is intentionally disabled until SaaS PaperDocument has explicit
+  // ordering semantics. The old type-level numbering could silently corrupt it.
+  const reorderBlocks = () => setBridgeError('Reordering requires the canonical PaperDocument editor.')
+  const handleReorder = () => {}
 
-  const handleReorder = (a, b) => {
-    if (b === 'over') {
-      setDragOverId(a)
-      return
-    }
-    reorderBlocks(a, b)
-  }
-
-  const handleExportDocx = async () => {
-    setExporting(true)
-    try {
-      await exportProDocumentAsRealDocx(doc, paperSettings, loadedPaper)
-    } catch (error) {
-      console.warn('Real DOCX export failed, using HTML fallback:', error)
-      exportProDocumentAsDocx(doc, paperSettings, loadedPaper)
-    } finally {
-      setExporting(false)
-    }
-  }
+  const handleExportDocx = () => setBridgeError('DOCX export is disabled in legacy compatibility mode pending canonical renderer parity.')
 
   const meta = doc.meta || {}
+  if (!compatibility.compatible) return (
+    <section className="ps6-compatibility-gate" role="status" style={{padding:28,border:'1px solid #ccd8e0',borderRadius:16,background:'#f8fafb',color:'#17354a'}}>
+      <h2 style={{fontSize:19,fontWeight:700}}>Canonical editor handoff required</h2>
+      <p style={{margin:'10px 0',fontSize:13,lineHeight:1.65}}>This source format is not safe to flatten into the legacy Pro Editor: {compatibility.reason}. Your original paper has not been changed.</p>
+      {onReturnToSource && <button type="button" onClick={onReturnToSource} style={{padding:'10px 15px',borderRadius:10,background:'#0b2c4d',color:'#fff'}}>Return to paper workspace</button>}
+    </section>
+  )
 
+  const typeCounts = (doc.blocks || []).reduce((acc,b)=>{acc[b.sourceType]=(acc[b.sourceType]||0)+1;return acc},{})
   return (
     <div style={{ minHeight: '100vh', background: D.bg, color: D.silver, display: 'flex', flexDirection: 'column' }}>
       <style>{editorProseStyles}</style>
-      <header style={{ padding: '14px 18px', borderBottom: `1px solid ${D.border}`, display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'center', justifyContent: 'space-between', background: 'rgba(7,22,40,0.96)' }}>
+      <header style={{ padding: '14px 18px', borderBottom: `1px solid ${D.border}`, display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'center', justifyContent: 'space-between', background: 'linear-gradient(180deg,#fff,#f5f8fa)' }}>
         <div>
           <div style={{ fontSize: 18, fontWeight: 800, color: D.gold }}>Paper Studio Pro</div>
-          <div style={{ fontSize: 12, color: D.muted, marginTop: 4 }}>Tables · images · drag reorder · real DOCX · bilingual columns</div>
+          <div style={{ fontSize: 12, color: D.muted, marginTop: 4 }}>V6-C protected legacy edit · source-preserving · canonical renderer pending</div>
         </div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          <button type="button" onClick={() => printProDocument(doc, paperSettings, loadedPaper)} style={{ padding: '10px 16px', borderRadius: 10, border: '1px solid rgba(200,153,26,0.45)', background: 'rgba(200,153,26,0.14)', color: D.gold, cursor: 'pointer', fontWeight: 700 }}>
+          <button type="button" disabled title="Canonical print parity is pending for this compatibility document" onClick={() => setBridgeError('Use validated canonical renderer for printing. Legacy Pro direct print is disabled to avoid missing questions.')} style={{ padding: '10px 16px', borderRadius: 10, border: '1px solid rgba(200,153,26,0.45)', background: 'rgba(200,153,26,0.14)', color: D.gold, cursor: 'pointer', fontWeight: 700 }}>
             Print
           </button>
-          <button type="button" disabled={exporting} onClick={handleExportDocx} style={{ padding: '10px 16px', borderRadius: 10, border: `1px solid ${D.border}`, background: 'rgba(11,44,77,0.55)', color: D.silver, cursor: exporting ? 'wait' : 'pointer', fontWeight: 600, opacity: exporting ? 0.7 : 1 }}>
-            {exporting ? 'Exporting…' : 'Export DOCX'}
+          <button type="button" disabled title="Canonical DOCX export parity is pending" onClick={handleExportDocx} style={{ padding: '10px 16px', borderRadius: 10, border: `1px solid ${D.border}`, background: '#edf2f6', color: D.silver, cursor: 'not-allowed', fontWeight: 600, opacity: 0.55 }}>
+            Export DOCX (pending parity)
           </button>
           {onOpenPrintPreview && (
-            <button type="button" onClick={() => onOpenPrintPreview(documentToPaper(doc, loadedPaper || {}))} style={{ padding: '10px 16px', borderRadius: 10, border: `1px solid ${D.border}`, background: 'rgba(11,44,77,0.55)', color: D.silver, cursor: 'pointer', fontWeight: 600 }}>
+            <button type="button" onClick={() => { try { onOpenPrintPreview(applyLegacyWorkingDocument(doc, loadedPaper)) } catch(err) { setBridgeError(err.message) } }} style={{ padding: '10px 16px', borderRadius: 10, border: `1px solid ${D.border}`, background: '#edf2f6', color: D.silver, cursor: 'pointer', fontWeight: 600 }}>
               Template Preview
             </button>
           )}
@@ -233,53 +229,47 @@ export default function PaperDocumentEditor({
         </div>
       </header>
 
-      {!isMobile && activeEditor && (
-        <div style={{ padding: '10px 18px', borderBottom: `1px solid ${D.border}` }}>
-          <EditorRibbon editor={activeEditor} />
-        </div>
-      )}
+      {bridgeError && <div role="alert" style={{padding:'12px 18px',background:'#fff2e7',color:'#813b18',borderBottom:'1px solid #ebc6ac',fontSize:12}}>{bridgeError}</div>}
+      {!isMobile && activeEditor && <div style={{ padding:'9px 18px',fontSize:11,color:D.silver,borderBottom:`1px solid ${D.border}` }}>Plain bilingual question editing is enabled. Rich formatting requires the canonical renderer.</div>}
 
       <div style={{ flex: 1, display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '280px 1fr', gap: 0, minHeight: 0 }}>
         {!isMobile && (
-          <aside style={{ borderRight: `1px solid ${D.border}`, padding: 16, overflowY: 'auto', background: 'rgba(11,44,77,0.35)' }}>
+          <aside style={{ borderRight: `1px solid ${D.border}`, padding: 16, overflowY: 'auto', background: '#edf2f6' }}>
             <div style={{ fontSize: 11, letterSpacing: '0.14em', textTransform: 'uppercase', color: D.muted, marginBottom: 10 }}>Document</div>
             <input
               value={meta.schoolName || ''}
-              onChange={e => persist({ ...doc, meta: { ...meta, schoolName: e.target.value } })}
+              readOnly title="School identity is protected by SaaS"
               placeholder="School name"
-              style={{ width: '100%', marginBottom: 8, padding: '8px 10px', borderRadius: 8, border: `1px solid ${D.border}`, background: 'rgba(7,22,40,0.6)', color: D.silver }}
+              style={{ width: '100%', marginBottom: 8, padding: '8px 10px', borderRadius: 8, border: `1px solid ${D.border}`, background: '#fff', color: D.silver }}
             />
             <input
               value={meta.subject || ''}
-              onChange={e => persist({ ...doc, meta: { ...meta, subject: e.target.value } })}
+              readOnly title="Subject follows the signed teacher assignment"
               placeholder="Subject"
-              style={{ width: '100%', marginBottom: 8, padding: '8px 10px', borderRadius: 8, border: `1px solid ${D.border}`, background: 'rgba(7,22,40,0.6)', color: D.silver }}
+              style={{ width: '100%', marginBottom: 8, padding: '8px 10px', borderRadius: 8, border: `1px solid ${D.border}`, background: '#fff', color: D.silver }}
             />
             <input
               value={meta.classLevel || ''}
-              onChange={e => persist({ ...doc, meta: { ...meta, classLevel: e.target.value } })}
+              readOnly title="Class follows the signed teacher assignment"
               placeholder="Class"
-              style={{ width: '100%', marginBottom: 8, padding: '8px 10px', borderRadius: 8, border: `1px solid ${D.border}`, background: 'rgba(7,22,40,0.6)', color: D.silver }}
+              style={{ width: '100%', marginBottom: 8, padding: '8px 10px', borderRadius: 8, border: `1px solid ${D.border}`, background: '#fff', color: D.silver }}
             />
             <input
               value={meta.address || ''}
-              onChange={e => persist({ ...doc, meta: { ...meta, address: e.target.value } })}
+              readOnly title="School address is protected by SaaS"
               placeholder="School address"
-              style={{ width: '100%', marginBottom: 8, padding: '8px 10px', borderRadius: 8, border: `1px solid ${D.border}`, background: 'rgba(7,22,40,0.6)', color: D.silver }}
+              style={{ width: '100%', marginBottom: 8, padding: '8px 10px', borderRadius: 8, border: `1px solid ${D.border}`, background: '#fff', color: D.silver }}
             />
-            <div style={{ fontSize: 11, color: D.muted, margin: '12px 0 8px' }}>Drag questions to reorder</div>
+            <div style={{ fontSize: 11, color: D.muted, margin: '12px 0 8px' }}>Source question order (locked for compatibility)</div>
             <div style={{ display: 'grid', gap: 6 }}>
               {(doc.blocks || []).map(b => (
                 <button
                   key={b.id}
                   type="button"
-                  draggable
-                  onDragStart={(e) => e.dataTransfer.setData('text/plain', b.id)}
-                  onDragOver={(e) => { e.preventDefault(); setDragOverId(b.id) }}
-                  onDrop={(e) => {
-                    e.preventDefault()
-                    reorderBlocks(e.dataTransfer.getData('text/plain'), b.id)
-                  }}
+                  draggable={false}
+                  onDragStart={(e) => e.preventDefault()}
+                  onDragOver={(e) => e.preventDefault()}
+                  onDrop={(e) => e.preventDefault()}
                   onClick={() => setActiveBlockId(b.id)}
                   style={{
                     textAlign: 'left',
@@ -288,11 +278,11 @@ export default function PaperDocumentEditor({
                     border: `1px solid ${activeBlockId === b.id ? 'rgba(200,153,26,0.5)' : dragOverId === b.id ? 'rgba(10,132,255,0.45)' : D.border}`,
                     background: activeBlockId === b.id ? 'rgba(200,153,26,0.12)' : 'rgba(7,22,40,0.5)',
                     color: activeBlockId === b.id ? D.gold : D.silver,
-                    cursor: 'grab',
+                    cursor: 'default',
                     fontSize: 13,
                   }}
                 >
-                  ⋮⋮ Q{b.questionNo} · {b.marks}m
+                  Q{b.questionNo} · {b.marks}m
                 </button>
               ))}
             </div>
@@ -318,6 +308,8 @@ export default function PaperDocumentEditor({
                     setActiveEditor={setActiveEditor}
                     onBlockChange={onBlockChange}
                     onReorder={handleReorder}
+                    allowReorder={false}
+                    allowMarksEdit={block.marksScope==='item'||typeCounts[block.sourceType]===1}
                     dragOverId={dragOverId}
                   />
                 ))}
@@ -331,8 +323,8 @@ export default function PaperDocumentEditor({
       </div>
 
       {isMobile && activeEditor && (
-        <div style={{ position: 'fixed', left: 0, right: 0, bottom: 0, padding: '8px 10px calc(8px + env(safe-area-inset-bottom))', background: 'rgba(7,22,40,0.98)', borderTop: `1px solid ${D.border}` }}>
-          <EditorRibbon editor={activeEditor} compact />
+        <div style={{ position: 'fixed', left: 0, right: 0, bottom: 0, padding: '8px 10px calc(8px + env(safe-area-inset-bottom))', background: '#f8fafb', borderTop: `1px solid ${D.border}` }}>
+          <span style={{fontSize:11,color:D.silver}}>Plain-text compatibility mode · rich formatting pending canonical renderer</span>
         </div>
       )}
     </div>

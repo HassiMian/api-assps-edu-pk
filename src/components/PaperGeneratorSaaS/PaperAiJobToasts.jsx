@@ -67,7 +67,10 @@ export default function PaperAiJobToasts() {
   const seenRef = useRef(new Set())
 
   useEffect(() => {
+    let blocked = false
+    let timer = null
     const poll = async () => {
+      if (blocked) return
       try {
         const data = await getPaperAiJobs(12)
         const jobs = Array.isArray(data?.jobs) ? data.jobs : []
@@ -103,14 +106,19 @@ export default function PaperAiJobToasts() {
         if (fresh.length) {
           setToasts(prev => [...fresh, ...prev].slice(0, 4))
         }
-      } catch {
-        // ignore polling errors
+      } catch (error) {
+        // A disabled school feature/expired session must not generate a 403
+        // every five seconds across a shared school network.
+        if ([401,403].includes(Number(error?.response?.status))) {
+          blocked = true
+          if (timer) clearInterval(timer)
+        }
       }
     }
 
+    timer = setInterval(poll, 5000)
     poll()
-    const timer = setInterval(poll, 5000)
-    return () => clearInterval(timer)
+    return () => {blocked=true;clearInterval(timer)}
   }, [])
 
   const dismiss = (id) => setToasts(prev => prev.filter(t => t.id !== id))

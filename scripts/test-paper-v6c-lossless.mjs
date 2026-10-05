@@ -31,6 +31,7 @@ test('all six questions are represented, not merely first question per type',()=
  const doc=legacyPaperToWorkingDocument(fixture())
  assert.equal(doc.blocks.length,6)
  assert.deepEqual(doc.blocks.map(x=>x.id),['mcq::0','mcq::1','short::0','short::1','short::2','long::0'])
+ assert.deepEqual(doc.blocks.map(x=>x.questionNo),[1,2,3,4,5,6])
  assert.equal(doc.authority,'LEGACY_COMPATIBILITY_ONLY')
  assert.equal(doc.canonicalWriteAllowed,false)
  assert.equal(doc.printApproved,false)
@@ -95,4 +96,14 @@ test('unsupported specialist and official document families are NOT silently fla
    assert.equal(classifyLegacyEditablePaper(source).compatible,false)
    assert.throws(()=>legacyPaperToWorkingDocument(source),/V6-C legacy bridge refused/)
  }
+})
+
+
+test('rich HTML and conflicting source aliases cannot be silently flattened',()=>{
+ const source=fixture(),working=legacyPaperToWorkingDocument(source)
+ const html=structuredClone(working);html.blocks[1].contentHtml='<p>Changed <strong>formatting</strong></p>'
+ assert.throws(()=>applyLegacyWorkingDocument(html,source),/rich text requires/)
+ const aliases=fixture();aliases.mcq[1].en='Independent English';aliases.mcq[1].text='Different mirrored text'
+ const edit=legacyPaperToWorkingDocument(aliases);edit.blocks[1].contentHtml='<p>New text</p>'
+ assert.throws(()=>applyLegacyWorkingDocument(edit,aliases),/conflicting source aliases/)
 })

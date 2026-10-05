@@ -7,7 +7,10 @@ import {
   GraduationCap,LibraryBig,ScanLine,ShieldCheck,Sparkles,Upload,UsersRound,
   WandSparkles,LayoutTemplate,RefreshCw,School,Layers3,
 } from "lucide-react";
+import dynamic from "next/dynamic";
+import {classifyLegacyEditablePaper} from "@/components/PaperGeneratorSaaS/editor/losslessLegacyBridge.mjs";
 import PTSPaperGenerator from "@/components/PaperGeneratorSaaS/PTSPaperGenerator";
+const ProtectedLegacyEditor:any=dynamic(()=>import("@/components/PaperGeneratorSaaS/editor/PaperDocumentEditor"),{ssr:false});
 const PaperGenerator:any=PTSPaperGenerator;
 import QuestionBankBrowser from "@/components/PaperGeneratorSaaS/QuestionBankBrowser";
 import SavedPapersTab from "@/components/PaperGeneratorSaaS/SavedPapersTab";
@@ -69,6 +72,8 @@ export default function TeacherPaperGenerator(){
   const [workspace,setWorkspace]=useState<Workspace>("home");
   const [createSource,setCreateSource]=useState<CreateSource>("start");
   const [loadedPaper,setLoadedPaper]=useState<any>(null);
+  const [editedPaper,setEditedPaper]=useState<any>(null);
+  const [editorMode,setEditorMode]=useState<"template"|"protected">("template");
   const [assignments,setAssignments]=useState<Assignment[]>([]);
   const [papers,setPapers]=useState<ProjectedPaper[]>([]);
   const [contextLoading,setContextLoading]=useState(true);
@@ -80,8 +85,9 @@ export default function TeacherPaperGenerator(){
 
   const subjects=useMemo(()=>[...new Set(assignments.flatMap(a=>a.subjects||[]).filter(Boolean))],[assignments]);
   const openWorkspace=(id:Workspace)=>{setWorkspace(id);if(id==='create'&&!loadedPaper)setCreateSource('start');if(typeof window!=='undefined')window.history.replaceState({},"",`?workspace=${id}`)};
-  const openSource=(id:string)=>{if(id==='papers'){openWorkspace('papers');return}setWorkspace('create');setLoadedPaper(null);setCreateSource(id as CreateSource)};
-  const openPaper=(paper:any)=>{setLoadedPaper(paper);setWorkspace('create');setCreateSource('editor')};
+  const openSource=(id:string)=>{if(id==='papers'){openWorkspace('papers');return}setWorkspace('create');setLoadedPaper(null);setEditedPaper(null);setEditorMode('template');setCreateSource(id as CreateSource)};
+  const openPaper=(paper:any)=>{setLoadedPaper(paper);setEditedPaper(null);setEditorMode('template');setWorkspace('create');setCreateSource('editor')};
+  const openOwnedSavedPaper=(paper:any)=>{setLoadedPaper(paper);setEditedPaper(null);setEditorMode(classifyLegacyEditablePaper(paper).compatible?'protected':'template');setWorkspace('create');setCreateSource('editor')};
   const fromGenerated=(paper:any)=>{setLoadedPaper(paper);setWorkspace('create');setCreateSource('editor')};
 
   const createContent=()=>{
@@ -89,7 +95,7 @@ export default function TeacherPaperGenerator(){
     if(createSource==='start')return <div className="ps6-start"><div className="ps6-start-head"><span>ONE AUTHORING PIPELINE</span><h3>How do you want to start?</h3><p>Every method converges into the same paper document, validation and output pipeline.</p></div><div className="ps6-source-grid">{SOURCE_CARDS.map(card=>{const Icon=card.icon;return <button type="button" key={card.id} onClick={()=>openSource(card.id)}><span className="ps6-source-tag">{card.tag}</span><span className="ps6-source-icon"><Icon size={20}/></span><strong>{card.title}</strong><small>{card.detail}</small><span className="ps6-source-arrow">Continue <ChevronRight size={14}/></span></button>})}</div></div>;
     if(createSource==='blank')return <BlankSetup assignments={assignments} onBack={()=>setCreateSource('start')} onCreate={openPaper}/>;
     if(createSource==='bank')return <div className="ps6-engine-wrap"><div className="ps6-engine-note"><strong>Question Bank creation path</strong><span>Select class, subject, chapters and questions. The resulting draft uses the same paper workspace.</span></div><PaperGenerator onReturnToSource={()=>setCreateSource('start')}/></div>;
-    if(createSource==='editor')return <div className="ps6-engine-wrap"><div className="ps6-engine-note"><strong>PaperDocument workspace</strong><span>Edit content, marks and layout here. Saving remains server-authorized by your teacher assignment.</span></div><PaperGenerator loadedPaper={loadedPaper} onReturnToSource={()=>{setLoadedPaper(null);setCreateSource('start')}}/></div>;
+    if(createSource==='editor')return <div className="ps6-engine-wrap"><div className="ps6-engine-note"><strong>{editorMode==='protected'?'V6-C protected document editor':'PaperDocument workspace'}</strong><span>{editorMode==='protected'?'All original questions and source details are preserved. Unsupported changes and direct Pro print/export remain blocked.':'Editing and saving remain server-authorized by the SaaS teacher assignment.'}</span></div>{editorMode==='protected'?<ProtectedLegacyEditor key={String(loadedPaper?.id||'own-paper')} loadedPaper={loadedPaper} onPaperChange={setEditedPaper} language={String(loadedPaper?.config?.language||'dual')} onReturnToSource={()=>{setEditorMode('template');setLoadedPaper(editedPaper||loadedPaper)}} onOpenPrintPreview={(paper:any)=>{setLoadedPaper(paper);setEditedPaper(null);setEditorMode('template')}}/>:<PaperGenerator key={String((editedPaper||loadedPaper)?.id||'draft')} loadedPaper={editedPaper||loadedPaper} onReturnToSource={()=>{setLoadedPaper(null);setEditedPaper(null);setCreateSource('start')}}/>}</div>;
     if(createSource==='ai')return <AIGeneratorTab onProceedToPreview={fromGenerated}/>;
     if(createSource==='import')return <AIImportTab/>;
     if(createSource==='scan')return <HandwrittenScannerTab onProceedToPreview={fromGenerated}/>;
@@ -107,7 +113,7 @@ export default function TeacherPaperGenerator(){
         <main className="ps6-main">{workspace==='home'&&<div className="ps6-home"><div className="ps6-main-head"><span>STUDIO HOME</span><h2>Start from the work, not from modules.</h2><p>Your live SaaS assignments and own papers determine what is available here.</p></div><div className="ps6-home-actions"><button onClick={()=>openWorkspace('create')} disabled={!contextLoading&&!contextError&&!assignments.length}><FileText size={20}/><strong>Create a paper</strong><small>Blank, Bank, own paper, import or AI.</small><ArrowRight size={16}/></button><button onClick={()=>openWorkspace('qbank')}><LibraryBig size={20}/><strong>Browse Question Bank</strong><small>Approved questions in assigned subjects.</small><ArrowRight size={16}/></button><button onClick={()=>openWorkspace('papers')}><FileStack size={20}/><strong>Continue My Papers</strong><small>{papers.length} own paper{papers.length===1?'':'s'} currently projected.</small><ArrowRight size={16}/></button></div><div className="ps6-recent"><div className="ps6-section-title"><span>RECENT OWN PAPERS</span><strong>Continue where you left off</strong></div>{papers.length?<div className="ps6-recent-grid">{papers.slice(0,4).map(p=><button key={p.id} onClick={()=>openWorkspace('papers')}><span><FileText size={16}/></span><div><strong>{p.name}</strong><small>{p.className||'Class'}{p.subjectName?` · ${p.subjectName}`:''}</small></div><ChevronRight size={14}/></button>)}</div>:<div className="ps6-empty">No saved paper belongs to this teacher account yet.</div>}</div></div>}
           {workspace==='create'&&<>{<div className="ps6-main-head"><span>CREATE PAPER</span><h2>One authoring funnel</h2><p>Choose a source. Every path converges into one structured paper workspace.</p></div>}{createContent()}</>}
           {workspace==='qbank'&&<><div className="ps6-main-head"><span>QUESTION BANK</span><h2>Approved questions for your teaching scope</h2><p>This is a selection library, not a separate paper editor.</p></div><QuestionBankBrowser/></>}
-          {workspace==='papers'&&<><div className="ps6-main-head"><span>MY PAPERS</span><h2>Your private teacher vault</h2><p>Only papers owned by your signed-in teacher identity are listed. SaaS Admin/Principal retains school-wide governance.</p></div><SavedPapersTab onLoadPaper={openPaper}/></>}
+          {workspace==='papers'&&<><div className="ps6-main-head"><span>MY PAPERS</span><h2>Your private teacher vault</h2><p>Only papers owned by your signed-in teacher identity are listed. SaaS Admin/Principal retains school-wide governance.</p></div><SavedPapersTab onLoadPaper={openOwnedSavedPaper}/></>}
         </main></div>
     </div>
   </DashboardLayout>

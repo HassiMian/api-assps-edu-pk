@@ -6,7 +6,15 @@ const hasOwn = (v,k) => Object.prototype.hasOwnProperty.call(v,k)
 const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')
 const toHtml = s => String(s??'').split('\n').map(line=>`<p>${esc(line)}</p>`).join('')
 const unescapeText = text => String(text).replace(/&nbsp;/gi,'\u00a0').replace(/&quot;/gi,'"').replace(/&#(?:39|x27);/gi,"'").replace(/&lt;/gi,'<').replace(/&gt;/gi,'>').replace(/&amp;/gi,'&')
-const htmlToPlain = html => unescapeText(String(html??'').replace(/<br\s*\/?\s*>/gi,'\n').replace(/<\/p>\s*<p[^>]*>/gi,'\n').replace(/<[^>]*>/g,'')).trim()
+const htmlToPlain = html => {
+  const source=String(html??'')
+  // The legacy source stores plain EN/UR fields. Do not pretend rich marks,
+  // embedded tables, images or font styling will survive HTML->plain storage.
+  const tags=[...source.matchAll(/<\/?([a-z][a-z0-9]*)\b[^>]*>/gi)]
+  if(tags.some(match=>!['p','br'].includes(match[1].toLowerCase()) || /<p\s+[^>]+>/i.test(match[0])))
+    refuse('rich text requires the canonical rich-text PaperDocument renderer')
+  return unescapeText(source.replace(/<br\s*\/?\s*>/gi,'\n').replace(/<\/p>\s*<p>/gi,'\n').replace(/<\/?p>/gi,'')).trim()
+}
 const eq = (a,b) => JSON.stringify(a)===JSON.stringify(b)
 const refuse = why => { throw new Error(`V6-C legacy bridge refused: ${why}`) }
 const safeType = value => typeof value==='string' && /^[A-Za-z][A-Za-z0-9_-]{0,127}$/.test(value)
@@ -40,7 +48,7 @@ export function legacyPaperToWorkingDocument(source){
       blocks.push({
         id:`${type.value}::${index}`, sourceType:type.value,sourceIndex:index,
         sourceItemId:item.id??null,
-        questionNo:Number(type.questionNo||0)+index,
+        questionNo:blocks.length+1,
         label:type.label||type.labelUrdu||`Question ${type.questionNo||index+1}`,
         marks,marksScope:hasOwn(item,'marks')?'item':'type',
         layout:type.layout||'block',
@@ -64,6 +72,8 @@ export function legacyPaperToWorkingDocument(source){
 
 const editable=['contentHtml','contentUrduHtml','answer','markingNotes','marks','label','layout']
 const setText=(item,primary,alternate,value)=>{
+  if(hasOwn(item,primary)&&hasOwn(item,alternate)&&item[primary]!==item[alternate])
+    refuse(`conflicting source aliases ${primary}/${alternate} need manual review`)
   if(hasOwn(item,primary))item[primary]=value
   if(hasOwn(item,alternate))item[alternate]=value
   if(!hasOwn(item,primary)&&!hasOwn(item,alternate))item[primary]=value
