@@ -16,7 +16,8 @@ export default function SavedPapersTab({ onLoadPaper }) {
       }}
       sourceFilter="all"
       title={teacher ? "My Papers" : "Saved Papers"}
-      subtitle={teacher ? "Only papers created by your signed-in teacher account are shown here." : "Search, reopen, or bulk print school papers."}
+      subtitle={teacher ? "Only papers created by your signed-in teacher account are shown here. Output actions are governed by the revision-bound Delivery Center." : "Search, reopen, or bulk print school papers."}
+      deliveryGoverned={teacher}
     />
   )
 }

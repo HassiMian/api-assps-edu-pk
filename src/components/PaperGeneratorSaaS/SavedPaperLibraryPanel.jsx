@@ -35,6 +35,7 @@ export default function SavedPaperLibraryPanel({
   title = 'Saved Papers',
   subtitle = 'Search, reopen, or bulk print saved papers.',
   showBulkActions = true,
+  deliveryGoverned = false,
 }) {
   const { savedPapers, deleteSavedPaper, renameSavedPaper, paperSettings } = usePaperStore()
   const [search, setSearch] = useState('')
@@ -128,7 +129,7 @@ export default function SavedPaperLibraryPanel({
             {subjectOptions.map(item => <option key={item} value={item}>{item}</option>)}
           </select>
           <span style={{ color: C.muted, fontSize: 12 }}>{filtered.length} of {savedPapers.length} papers</span>
-          {showBulkActions && (
+          {showBulkActions && !deliveryGoverned && (
             <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, flexWrap: 'wrap' }}>
               <button onClick={toggleSelectAll} style={{ background: 'rgba(15,23,42,0.46)', border: `1px solid ${C.border}`, borderRadius: 10, padding: '8px 12px', color: C.silver, fontWeight: 600, cursor: 'pointer', fontSize: 12 }}>
                 {selectedIds.size === filtered.length && filtered.length ? 'Clear selection' : 'Select all'}
@@ -227,21 +228,13 @@ export default function SavedPaperLibraryPanel({
                     <button onClick={() => onLoadPaper?.(paper)} style={{ flex: 1, background: `linear-gradient(135deg, ${C.gold}, ${C.goldL})`, border: 'none', borderRadius: 10, padding: '9px 0', color: '#071e34', fontWeight: 700, cursor: 'pointer', fontSize: 13 }}>
                       Reopen
                     </button>
-                    <button onClick={() => printAnswerKeyDocument(paper, stats.types, paperSettings, paper.config)} style={{ background: 'rgba(15,23,42,0.46)', border: `1px solid ${C.border}`, borderRadius: 10, padding: '9px 10px', color: C.silver, fontWeight: 600, cursor: 'pointer', fontSize: 11 }}>
-                      Key
-                    </button>
-                    <button onClick={() => printMarkingSchemeDocument(paper, stats.types, paperSettings, paper.config)} style={{ background: 'rgba(15,23,42,0.46)', border: `1px solid ${C.border}`, borderRadius: 10, padding: '9px 10px', color: C.silver, fontWeight: 600, cursor: 'pointer', fontSize: 11 }}>
-                      Scheme
-                    </button>
-                    <button onClick={() => sharePaperViaWhatsApp(paper, paperSettings)} style={{ background: 'rgba(15,23,42,0.46)', border: `1px solid ${C.border}`, borderRadius: 10, padding: '9px 10px', color: C.silver, fontWeight: 600, cursor: 'pointer', fontSize: 11 }}>
-                      WA
-                    </button>
-                    <button onClick={() => exportPaperAsDocx(paper, paperSettings)} style={{ background: 'rgba(15,23,42,0.46)', border: `1px solid ${C.border}`, borderRadius: 10, padding: '9px 10px', color: C.silver, fontWeight: 600, cursor: 'pointer', fontSize: 11 }}>
-                      DOCX
-                    </button>
-                    <button onClick={() => printSavedPapers([paper], paperSettings)} style={{ background: 'rgba(15,23,42,0.46)', border: `1px solid ${C.border}`, borderRadius: 10, padding: '9px 10px', color: C.silver, fontWeight: 600, cursor: 'pointer', fontSize: 11 }}>
-                      Print
-                    </button>
+                    {!deliveryGoverned && <>
+                    <button onClick={() => printAnswerKeyDocument(paper, stats.types, paperSettings, paper.config)} style={{ background: 'rgba(15,23,42,0.46)', border: `1px solid ${C.border}`, borderRadius: 10, padding: '9px 10px', color: C.silver, fontWeight: 600, cursor: 'pointer', fontSize: 11 }}>Key</button>
+                    <button onClick={() => printMarkingSchemeDocument(paper, stats.types, paperSettings, paper.config)} style={{ background: 'rgba(15,23,42,0.46)', border: `1px solid ${C.border}`, borderRadius: 10, padding: '9px 10px', color: C.silver, fontWeight: 600, cursor: 'pointer', fontSize: 11 }}>Scheme</button>
+                    <button onClick={() => sharePaperViaWhatsApp(paper, paperSettings)} style={{ background: 'rgba(15,23,42,0.46)', border: `1px solid ${C.border}`, borderRadius: 10, padding: '9px 10px', color: C.silver, fontWeight: 600, cursor: 'pointer', fontSize: 11 }}>WA</button>
+                    <button onClick={() => exportPaperAsDocx(paper, paperSettings)} style={{ background: 'rgba(15,23,42,0.46)', border: `1px solid ${C.border}`, borderRadius: 10, padding: '9px 10px', color: C.silver, fontWeight: 600, cursor: 'pointer', fontSize: 11 }}>DOCX</button>
+                    <button onClick={() => printSavedPapers([paper], paperSettings)} style={{ background: 'rgba(15,23,42,0.46)', border: `1px solid ${C.border}`, borderRadius: 10, padding: '9px 10px', color: C.silver, fontWeight: 600, cursor: 'pointer', fontSize: 11 }}>Print</button>
+                    </>}
                     <button onClick={() => setConfirmDelete(paper)} style={{ background: 'rgba(255,55,95,0.1)', border: '1px solid rgba(255,55,95,0.25)', borderRadius: 10, padding: '9px 10px', color: C.red, fontWeight: 600, cursor: 'pointer', fontSize: 11 }}>
                       Del
                     </button>

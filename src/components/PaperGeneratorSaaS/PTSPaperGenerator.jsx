@@ -731,7 +731,7 @@ const MEDIUMS = [
  { v:'english', l:'ENGLISH MEDIUM' },
 ]
 
-function QuestionPanel({ subjectId, syllabusId, selectedChapters, paper, onPaperChange, onBack, overrideConfig, loadedPaper, uiTheme='dark', onToggleTheme }) {
+function QuestionPanel({ subjectId, syllabusId, selectedChapters, paper, onPaperChange, onBack, overrideConfig, loadedPaper, uiTheme='dark', onToggleTheme, deliveryLocked=false }) {
  const isLoaded = !!overrideConfig
  const isStore = !isLoaded && subjectId.startsWith('store:')
  const bankSubjectId = resolveStaticSubjectId(subjectId, syllabusId)
@@ -1199,7 +1199,7 @@ function QuestionPanel({ subjectId, syllabusId, selectedChapters, paper, onPaper
  <DBtn color="ghost" onClick={doSharePdf} disabled={!totalQs} style={{ padding:'8px 14px', fontSize:12 }}>PDF</DBtn>
  <DBtn color="ghost" onClick={doShareWhatsapp} disabled={!totalQs} style={{ padding:'8px 14px', fontSize:12 }}>WhatsApp</DBtn>
  <DBtn color="ghost" onClick={doSharePackage} disabled={!totalQs} style={{ padding:'8px 14px', fontSize:12 }}>Share</DBtn>
- <GoldBtn onClick={doPrint} style={{ padding:'8px 20px', fontSize:13 }}> Print</GoldBtn>
+ {deliveryLocked ? <button type="button" disabled title="Use the revision-bound Delivery Center after renderer approval." style={{ padding:'8px 20px', fontSize:13, borderRadius:8, border:'1px solid rgba(148,163,184,.28)', background:'rgba(148,163,184,.12)', color:D.muted, cursor:'not-allowed', fontWeight:700 }}>Print locked</button> : <GoldBtn onClick={doPrint} style={{ padding:'8px 20px', fontSize:13 }}> Print</GoldBtn>}
  </div>
  </div>
  <div style={{ display:'flex', gap:14, flexWrap:'wrap', alignItems:'center', marginTop:10, paddingTop:10, borderTop:`1px solid ${D.border}` }}>
@@ -1622,7 +1622,7 @@ const PRINT_MODES = [
 ]
 
 //  Main Component 
-export default function PTSPaperGenerator({ loadedPaper, onReturnToSource = null }) {
+export default function PTSPaperGenerator({ loadedPaper, onReturnToSource = null, deliveryLocked = false }) {
  const [uiTheme, setUiTheme] = useState(getInitialPaperTheme)
  const [step, setStep] = useState(() => loadedPaper ? 'questions' : 'syllabus')
  const [syllabusId, setSyllabusId] = useState(null)
@@ -1670,7 +1670,7 @@ export default function PTSPaperGenerator({ loadedPaper, onReturnToSource = null
  {step==='class' && (<ClassStep syllabusId={syllabusId} onSelect={id => { setClassId(id); setStep('subject') }} onBack={() => setStep('syllabus')} />)}
  {step==='subject' && (<SubjectStep syllabusId={syllabusId} classId={classId} onSelect={id => { setSubjectId(id); setStep('chapters') }} onBack={() => setStep('class')} />)}
  {step==='chapters' && (<ChapterStep subjectId={subjectId} syllabusId={syllabusId} selectedChapters={selChapters} selectedTopics={selTopics} onChange={(c,t) => { setSelChapters(c); setSelTopics(t) }} onNext={() => setStep('questions')} onBack={() => setStep('subject')} />)}
- {step==='questions' && (<QuestionPanel subjectId={subjectId || 'loaded'} syllabusId={syllabusId} selectedChapters={selChapters} paper={paper} onPaperChange={setPaper} overrideConfig={loadedPaper?.config || null} loadedPaper={loadedPaper || null} uiTheme={uiTheme} onToggleTheme={() => setUiTheme(m => m === 'dark' ? 'light' : 'dark')} onBack={() => {
+ {step==='questions' && (<QuestionPanel subjectId={subjectId || 'loaded'} syllabusId={syllabusId} selectedChapters={selChapters} paper={paper} onPaperChange={setPaper} overrideConfig={loadedPaper?.config || null} loadedPaper={loadedPaper || null} uiTheme={uiTheme} onToggleTheme={() => setUiTheme(m => m === 'dark' ? 'light' : 'dark')} deliveryLocked={deliveryLocked} onBack={() => {
  if (loadedPaper && onReturnToSource) onReturnToSource();
  else setStep(loadedPaper ? 'syllabus' : 'chapters');
  }} />)}
