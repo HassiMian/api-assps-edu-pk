@@ -4,11 +4,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { envString } from '@/lib/server/env';
 import { isIP } from 'node:net';
-import * as subscriptionList from '../saas-admin/subscription-requests/route';
-import * as subscriptionDetail from '../saas-admin/subscription-requests/[id]/route';
-import * as subscriptionApprove from '../saas-admin/subscription-requests/[id]/approve/route';
-import * as subscriptionReject from '../saas-admin/subscription-requests/[id]/reject/route';
-import * as currentSchoolSettings from '../school/settings/current/route';
 
 export const dynamic = 'force-dynamic';
 
@@ -32,6 +27,7 @@ async function dispatchLocalApi(req: NextRequest, targetPath: string) {
   const [scope, resource, id, action] = parts;
 
   if (targetPath === 'school/settings/current' && req.method === 'GET') {
+    const currentSchoolSettings = await import('../school/settings/current/route');
     return currentSchoolSettings.GET();
   }
 
@@ -40,18 +36,22 @@ async function dispatchLocalApi(req: NextRequest, targetPath: string) {
   }
 
   if (!id && !action && req.method === 'GET') {
+    const subscriptionList = await import('../saas-admin/subscription-requests/route');
     return subscriptionList.GET(req);
   }
 
   if (id && !action && req.method === 'GET') {
+    const subscriptionDetail = await import('../saas-admin/subscription-requests/[id]/route');
     return subscriptionDetail.GET(req, { params: Promise.resolve({ id }) });
   }
 
   if (id && action === 'approve' && req.method === 'POST') {
+    const subscriptionApprove = await import('../saas-admin/subscription-requests/[id]/approve/route');
     return subscriptionApprove.POST(req, { params: Promise.resolve({ id }) });
   }
 
   if (id && action === 'reject' && req.method === 'POST') {
+    const subscriptionReject = await import('../saas-admin/subscription-requests/[id]/reject/route');
     return subscriptionReject.POST(req, { params: Promise.resolve({ id }) });
   }
 
