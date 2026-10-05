@@ -65,10 +65,28 @@ async function handler(req: NextRequest, { params }: { params: Promise<{ path: s
   if ((targetPath === 'auth/users/provision-one' && req.method === 'POST') ||
       (targetPath === 'auth/users/guardian-contact' && req.method === 'PATCH') ||
       (targetPath === 'auth/users/resolve-distinct-guardian' && req.method === 'POST') ||
-      (targetPath.startsWith('auth/users/pending-activation/') && req.method === 'POST')) {
+      (targetPath.startsWith('auth/users/pending-activation/') && req.method === 'POST') ||
+      (targetPath.startsWith('portal/paper-studio/papers/') && req.method === 'PATCH')) {
     const origin = req.headers.get('origin');
-    if (origin && origin !== req.nextUrl.origin) {
-      return NextResponse.json({ success: false, message: 'Origin not allowed.' }, { status: 403 });
+    if (origin) {
+      let allowed = false;
+      try {
+        const originUrl = new URL(origin);
+        // Raw Host is the browser's request authority and is preserved by our Nginx config.
+        // Do not trust X-Forwarded-Host here: it can be rewritten upstream and must not
+        // become a CSRF bypass primitive. X-Forwarded-Proto is used only as an extra
+        // scheme check when present behind the trusted reverse proxy.
+        const requestHost = (req.headers.get('host') || req.nextUrl.host || '').toLowerCase();
+        const forwardedProto = req.headers.get('x-forwarded-proto')?.split(',')[0]?.trim()?.toLowerCase();
+        const hostMatches = originUrl.host.toLowerCase() === requestHost;
+        const schemeMatches = !forwardedProto || originUrl.protocol.toLowerCase() === `${forwardedProto}:`;
+        allowed = hostMatches && schemeMatches;
+      } catch {
+        allowed = false;
+      }
+      if (!allowed) {
+        return NextResponse.json({ success: false, message: 'Origin not allowed.' }, { status: 403 });
+      }
     }
   }
   const localResponse = await dispatchLocalApi(req, targetPath);

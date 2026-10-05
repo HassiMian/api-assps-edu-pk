@@ -1,7 +1,7 @@
 "use client";
 
 import DashboardLayout from "@/components/DashboardLayout";
-import {useCallback,useEffect,useMemo,useState,type ComponentType} from "react";
+import {useCallback,useEffect,useMemo,useRef,useState,type ComponentType} from "react";
 import {
   ArrowRight,BookOpenCheck,BrainCircuit,ChevronRight,FileStack,FileText,
   GraduationCap,LibraryBig,ScanLine,ShieldCheck,Sparkles,Upload,UsersRound,
@@ -21,7 +21,9 @@ import BoardPaperGenerator from "@/components/PaperGeneratorSaaS/BoardPaperGener
 import PaperAiJobToasts from "@/components/PaperGeneratorSaaS/PaperAiJobToasts";
 import {createBlankPaperDraft,BASIC_PAPER_CLASS_LEVELS} from "@/components/PaperGeneratorSaaS/paperCreationDraft";
 import api from "@/utils/api";
+import {fetchProtectedPaperRevisions} from "@/components/PaperGeneratorSaaS/paperVaultService";
 
+type RevisionGuard={revision:number;hash:string};
 type Workspace="home"|"create"|"qbank"|"papers";
 type CreateSource="start"|"blank"|"bank"|"editor"|"ai"|"import"|"scan"|"board";
 type Assignment={className:string;section?:string;subjects:string[]};
@@ -74,6 +76,14 @@ export default function TeacherPaperGenerator(){
   const [loadedPaper,setLoadedPaper]=useState<any>(null);
   const [editedPaper,setEditedPaper]=useState<any>(null);
   const [editorMode,setEditorMode]=useState<"template"|"protected">("template");
+  const [saveGuard,setSaveGuard]=useState<RevisionGuard|null>(null);
+  const [openingPaper,setOpeningPaper]=useState(false);
+  const [saveBusy,setSaveBusy]=useState(false);
+  const [saveNotice,setSaveNotice]=useState("");
+  const [saveError,setSaveError]=useState("");
+  const [saveConflict,setSaveConflict]=useState(false);
+  const [editorEpoch,setEditorEpoch]=useState(0);
+  const latestOpenRef=useRef(0);
   const [assignments,setAssignments]=useState<Assignment[]>([]);
   const [papers,setPapers]=useState<ProjectedPaper[]>([]);
   const [contextLoading,setContextLoading]=useState(true);
@@ -84,18 +94,68 @@ export default function TeacherPaperGenerator(){
   useEffect(()=>{if(typeof window==='undefined')return;const tab=new URLSearchParams(window.location.search).get('tab');if(tab==='qbank')setWorkspace('qbank');else if(tab==='saved')setWorkspace('papers');else if(tab==='build'||tab==='unified'||tab==='board'||tab==='ai'||tab==='import'||tab==='scan')setWorkspace('create')},[]);
 
   const subjects=useMemo(()=>[...new Set(assignments.flatMap(a=>a.subjects||[]).filter(Boolean))],[assignments]);
-  const openWorkspace=(id:Workspace)=>{setWorkspace(id);if(id==='create'&&!loadedPaper)setCreateSource('start');if(typeof window!=='undefined')window.history.replaceState({},"",`?workspace=${id}`)};
-  const openSource=(id:string)=>{if(id==='papers'){openWorkspace('papers');return}setWorkspace('create');setLoadedPaper(null);setEditedPaper(null);setEditorMode('template');setCreateSource(id as CreateSource)};
-  const openPaper=(paper:any)=>{setLoadedPaper(paper);setEditedPaper(null);setEditorMode('template');setWorkspace('create');setCreateSource('editor')};
-  const openOwnedSavedPaper=(paper:any)=>{setLoadedPaper(paper);setEditedPaper(null);setEditorMode(classifyLegacyEditablePaper(paper).compatible?'protected':'template');setWorkspace('create');setCreateSource('editor')};
-  const fromGenerated=(paper:any)=>{setLoadedPaper(paper);setWorkspace('create');setCreateSource('editor')};
+  const openWorkspace=(id:Workspace)=>{
+    if(id!==workspace&&editorMode==='protected'&&editedPaper&&typeof window!=='undefined'&&!window.confirm('Unsaved edits in the protected editor may be lost. Leave this workspace?'))return;
+    if(id!==workspace&&editorMode==='protected')setEditedPaper(null);
+    setWorkspace(id);if(id==='create'&&!loadedPaper)setCreateSource('start');if(typeof window!=='undefined')window.history.replaceState({},"",`?workspace=${id}`)
+  };
+  const clearSaveState=()=>{setSaveGuard(null);setEditedPaper(null);setSaveNotice('');setSaveError('');setSaveConflict(false);setEditorEpoch(0)};
+  const openSource=(id:string)=>{if(id==='papers'){openWorkspace('papers');return}setWorkspace('create');setLoadedPaper(null);clearSaveState();setEditorMode('template');setCreateSource(id as CreateSource)};
+  const openPaper=(paper:any)=>{setLoadedPaper(paper);clearSaveState();setEditorMode('template');setWorkspace('create');setCreateSource('editor')};
+  const openOwnedSavedPaper=async(paper:any)=>{
+    const id=String(paper?.id||'');const seq=++latestOpenRef.current;
+    setOpeningPaper(true);clearSaveState();setWorkspace('create');setCreateSource('editor');setLoadedPaper(null);setEditorMode('template');
+    try{
+      if(!/^\d+$/.test(id))throw Error('A valid server-owned paper ID is required.');
+      const [detail,review]=await Promise.all([
+        api.get(`/portal/paper-studio/papers/${encodeURIComponent(id)}`),
+        api.get(`/portal/paper-studio/papers/${encodeURIComponent(id)}/document-review`),
+      ]);
+      if(seq!==latestOpenRef.current)return;
+      if(!detail.data?.success||!review.data?.success||String(detail.data.data?.id)!==id||String(review.data.paperId)!==id)throw Error('Paper identity/revision could not be verified.');
+      const source={...detail.data.data.document,id,revision:Number(detail.data.data.revision),serverSynced:true};
+      setLoadedPaper(source);
+      if(review.data.review?.family==='legacy-connect-vault'&&classifyLegacyEditablePaper(source).compatible){
+        setSaveGuard({revision:Number(review.data.revision),hash:String(review.data.review.snapshotHash)});
+        setEditorEpoch(x=>x+1);
+        setEditorMode('protected');
+      }else setEditorMode('template');
+    }catch(err:any){if(seq===latestOpenRef.current)setSaveError(err?.response?.data?.message||err?.message||'Your saved paper could not be verified.');}
+    finally{if(seq===latestOpenRef.current)setOpeningPaper(false)}
+  };
+  const fromGenerated=(paper:any)=>{setLoadedPaper(paper);clearSaveState();setEditorMode('template');setWorkspace('create');setCreateSource('editor')};
+  const saveWorkingDocument=async(workingDocument:any)=>{
+    if(!saveGuard||!loadedPaper?.id||saveConflict||saveBusy)return;
+    setSaveBusy(true);setSaveError('');setSaveNotice('');
+    try{
+      const {data}=await api.patch(`/portal/paper-studio/papers/${encodeURIComponent(String(loadedPaper.id))}`,{
+        expectedRevision:saveGuard.revision,expectedSnapshotHash:saveGuard.hash,workingDocument,
+      });
+      if(!data?.success||!data?.data?.snapshotHash)throw Error('Server did not confirm the revision.');
+      const confirmed=data.data;
+      const read=await api.get(`/portal/paper-studio/papers/${encodeURIComponent(String(loadedPaper.id))}`);
+      if(!read.data?.success||Number(read.data.data?.revision)!==Number(confirmed.revision))throw Error('Save committed, but the verified revision could not be reopened. Reload latest before another edit.');
+      setLoadedPaper({...read.data.data.document,id:String(read.data.data.id),revision:Number(read.data.data.revision),serverSynced:true});
+      setSaveGuard({revision:Number(confirmed.revision),hash:String(confirmed.snapshotHash)});
+      setEditedPaper(null);setSaveConflict(false);setEditorEpoch(x=>x+1);
+      setSaveNotice(confirmed.unchanged?`No changes to save. Revision ${confirmed.revision} remains current.`:`Saved as revision ${confirmed.revision}; previous snapshot retained on the server.`);
+    }catch(err:any){
+      if(Number(err?.response?.status)===409){setSaveConflict(true);setSaveError('Conflict: another session changed this paper. Your edits have NOT overwritten it. Reload latest to discard local edits and reopen the current revision.');}
+      else setSaveError(err?.response?.data?.message||err?.message||'Save could not be confirmed. Local editor changes remain visible; do not assume they reached the server.');
+    }finally{setSaveBusy(false)}
+  };
+  const reloadLatest=()=>{if(typeof window==='undefined'||window.confirm('Reload latest server revision? This discards any unsaved local edits.'))openOwnedSavedPaper({id:loadedPaper?.id})};
+  const loadRevisionHistory=async()=>{if(!loadedPaper?.id)throw new Error('Saved paper identity is missing.');return fetchProtectedPaperRevisions(loadedPaper.id)};
 
   const createContent=()=>{
-    if(!contextLoading&&!contextError&&!assignments.length)return <div className="ps6-assignment-block"><ShieldCheck size={24}/><h3>Teacher assignment required</h3><p>Paper creation is locked because this portal identity has no active class/subject assignment in the SaaS academic structure. Link the teacher first; My Papers remains available.</p></div>;
+    if(!contextLoading&&!contextError&&!assignments.length&&createSource!=='editor')return <div className="ps6-assignment-block"><ShieldCheck size={24}/><h3>Teacher assignment required</h3><p>Paper creation is locked because this portal identity has no active class/subject assignment in the SaaS academic structure. Link the teacher first; My Papers remains available.</p></div>;
     if(createSource==='start')return <div className="ps6-start"><div className="ps6-start-head"><span>ONE AUTHORING PIPELINE</span><h3>How do you want to start?</h3><p>Every method converges into the same paper document, validation and output pipeline.</p></div><div className="ps6-source-grid">{SOURCE_CARDS.map(card=>{const Icon=card.icon;return <button type="button" key={card.id} onClick={()=>openSource(card.id)}><span className="ps6-source-tag">{card.tag}</span><span className="ps6-source-icon"><Icon size={20}/></span><strong>{card.title}</strong><small>{card.detail}</small><span className="ps6-source-arrow">Continue <ChevronRight size={14}/></span></button>})}</div></div>;
     if(createSource==='blank')return <BlankSetup assignments={assignments} onBack={()=>setCreateSource('start')} onCreate={openPaper}/>;
     if(createSource==='bank')return <div className="ps6-engine-wrap"><div className="ps6-engine-note"><strong>Question Bank creation path</strong><span>Select class, subject, chapters and questions. The resulting draft uses the same paper workspace.</span></div><PaperGenerator onReturnToSource={()=>setCreateSource('start')}/></div>;
-    if(createSource==='editor')return <div className="ps6-engine-wrap"><div className="ps6-engine-note"><strong>{editorMode==='protected'?'V6-C protected document editor':'PaperDocument workspace'}</strong><span>{editorMode==='protected'?'All original questions and source details are preserved. Unsupported changes and direct Pro print/export remain blocked.':'Editing and saving remain server-authorized by the SaaS teacher assignment.'}</span></div>{editorMode==='protected'?<ProtectedLegacyEditor key={String(loadedPaper?.id||'own-paper')} loadedPaper={loadedPaper} onPaperChange={setEditedPaper} language={String(loadedPaper?.config?.language||'dual')} onReturnToSource={()=>{setEditorMode('template');setLoadedPaper(editedPaper||loadedPaper)}} onOpenPrintPreview={(paper:any)=>{setLoadedPaper(paper);setEditedPaper(null);setEditorMode('template')}}/>:<PaperGenerator key={String((editedPaper||loadedPaper)?.id||'draft')} loadedPaper={editedPaper||loadedPaper} onReturnToSource={()=>{setLoadedPaper(null);setEditedPaper(null);setCreateSource('start')}}/>}</div>;
+    if(createSource==='editor'&&openingPaper)return <div className="ps6-empty" role="status">Verifying your signed paper ownership and current revision…</div>;
+    if(createSource==='editor'&&saveError&&!loadedPaper)return <div className="cw-error" role="alert">{saveError}<button type="button" onClick={()=>openWorkspace('papers')}>Return to My Papers</button></div>;
+    if(createSource==='editor'&&!loadedPaper)return <div className="ps6-empty">Select a verified paper from My Papers first.</div>;
+    if(createSource==='editor')return <div className="ps6-engine-wrap"><div className="ps6-engine-note"><strong>{editorMode==='protected'?'V6-C protected document editor':'PaperDocument workspace'}</strong><span>{editorMode==='protected'?'All original questions and source details are preserved. Unsupported changes and direct Pro print/export remain blocked.':'Editing and saving remain server-authorized by the SaaS teacher assignment.'}</span></div>{editorMode==='protected'?<ProtectedLegacyEditor key={`${String(loadedPaper?.id||'own-paper')}-${saveGuard?.revision??0}-${editorEpoch}`} loadedPaper={loadedPaper} onPaperChange={(paper:any)=>{setEditedPaper(paper);setSaveNotice('');if(!saveConflict)setSaveError('')}} onSaveWorkingDocument={saveWorkingDocument} saveRevision={saveGuard?.revision??null} saving={saveBusy} saveNotice={saveNotice} saveError={saveError} saveConflict={saveConflict} onReloadLatest={reloadLatest} onLoadRevisionHistory={loadRevisionHistory} language={String(loadedPaper?.config?.language||'dual')} onReturnToSource={()=>{setEditorMode('template');setLoadedPaper(editedPaper||loadedPaper)}} onOpenPrintPreview={(paper:any)=>{setLoadedPaper(paper);setEditedPaper(null);setEditorMode('template')}}/>:<PaperGenerator key={String((editedPaper||loadedPaper)?.id||'draft')} loadedPaper={editedPaper||loadedPaper} onReturnToSource={()=>{setLoadedPaper(null);clearSaveState();setCreateSource('start')}}/>}</div>;
     if(createSource==='ai')return <AIGeneratorTab onProceedToPreview={fromGenerated}/>;
     if(createSource==='import')return <AIImportTab/>;
     if(createSource==='scan')return <HandwrittenScannerTab onProceedToPreview={fromGenerated}/>;

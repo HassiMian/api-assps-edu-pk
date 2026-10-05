@@ -50,6 +50,12 @@ function BlockEditor({
   useEffect(() => {
     if (isActive && editor) setActiveEditor(editor)
   }, [isActive, editor, setActiveEditor])
+  useEffect(() => {
+    if (!editor) return
+    const incoming = block.contentHtml || '<p></p>'
+    if (editor.getHTML() !== incoming) editor.commands.setContent(incoming, { emitUpdate: false })
+  }, [editor, block.contentHtml])
+
 
   return (
     <article
@@ -143,12 +149,25 @@ export default function PaperDocumentEditor({
   onPaperChange,
   onReturnToSource,
   onOpenPrintPreview,
+  onSaveWorkingDocument,
+  saveRevision = null,
+  saving = false,
+  saveNotice = '',
+  saveError = '',
+  saveConflict = false,
+  onReloadLatest,
+  onLoadRevisionHistory,
   paperSettings = {},
   language = 'english',
 }) {
   const compatibility = useMemo(() => classifyLegacyEditablePaper(loadedPaper), [loadedPaper])
   const [doc, setDoc] = useState(() => compatibility.compatible ? legacyPaperToWorkingDocument(loadedPaper) : {meta: {},blocks: []})
   const [bridgeError, setBridgeError] = useState('')
+  const [dirty,setDirty]=useState(false)
+  const [historyOpen,setHistoryOpen]=useState(false)
+  const [historyLoading,setHistoryLoading]=useState(false)
+  const [historyError,setHistoryError]=useState('')
+  const [historyData,setHistoryData]=useState(null)
   const [activeBlockId, setActiveBlockId] = useState(doc.blocks?.[0]?.id || null)
   const [activeEditor, setActiveEditor] = useState(null)
   const [isMobile, setIsMobile] = useState(false)
@@ -170,6 +189,7 @@ export default function PaperDocumentEditor({
       const nextPaper=applyLegacyWorkingDocument(nextDoc, loadedPaper)
       setBridgeError('')
       setDoc(nextDoc)
+      setDirty(true)
       onPaperChange?.(nextPaper)
     } catch(err) {
       setBridgeError(err?.message || 'This change cannot be represented by the legacy paper format.')
@@ -191,6 +211,16 @@ export default function PaperDocumentEditor({
 
   const handleExportDocx = () => setBridgeError('DOCX export is disabled in legacy compatibility mode pending canonical renderer parity.')
 
+  const toggleHistory = async () => {
+    if(historyOpen){setHistoryOpen(false);return}
+    setHistoryOpen(true);setHistoryError('')
+    if(!onLoadRevisionHistory)return
+    setHistoryLoading(true)
+    try{const data=await onLoadRevisionHistory();setHistoryData(data)}
+    catch(err){setHistoryError(err?.message||'Revision history could not be loaded.')}
+    finally{setHistoryLoading(false)}
+  }
+
   const meta = doc.meta || {}
   if (!compatibility.compatible) return (
     <section className="ps6-compatibility-gate" role="status" style={{padding:28,border:'1px solid #ccd8e0',borderRadius:16,background:'#f8fafb',color:'#17354a'}}>
@@ -210,6 +240,8 @@ export default function PaperDocumentEditor({
           <div style={{ fontSize: 12, color: D.muted, marginTop: 4 }}>V6-C protected legacy edit · source-preserving · canonical renderer pending</div>
         </div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          {onSaveWorkingDocument&&<button type="button" onClick={()=>onSaveWorkingDocument(doc)} disabled={!dirty||saving||saveConflict} aria-label="Save changes" style={{padding:'10px 16px',borderRadius:10,border:'1px solid #0b2c4d',background:dirty&&!saving&&!saveConflict?'#0b2c4d':'#e7edf2',color:dirty&&!saving&&!saveConflict?'#fff':'#7b8c98',fontWeight:750,cursor:dirty&&!saving&&!saveConflict?'pointer':'not-allowed'}}>{saving?'Saving…':`Save changes${saveRevision?` · Rev ${saveRevision}`:''}`}</button>}
+          {onLoadRevisionHistory&&<button type="button" onClick={toggleHistory} aria-expanded={historyOpen} style={{padding:'10px 14px',borderRadius:10,border:`1px solid ${D.border}`,background:historyOpen?'#e8eef3':'#fff',color:'#284b62',fontWeight:700,cursor:'pointer'}}>Revision history</button>}
           <button type="button" disabled title="Canonical print parity is pending for this compatibility document" onClick={() => setBridgeError('Use validated canonical renderer for printing. Legacy Pro direct print is disabled to avoid missing questions.')} style={{ padding: '10px 16px', borderRadius: 10, border: '1px solid rgba(200,153,26,0.45)', background: 'rgba(200,153,26,0.14)', color: D.gold, cursor: 'pointer', fontWeight: 700 }}>
             Print
           </button>
@@ -229,6 +261,14 @@ export default function PaperDocumentEditor({
         </div>
       </header>
 
+      {saveNotice&&<div role="status" style={{padding:'10px 18px',background:'#edf7f0',color:'#23543d',borderBottom:'1px solid #c5dfcd',fontSize:12}}>{saveNotice}</div>}
+      {saveError&&<div role="alert" style={{display:'flex',alignItems:'center',flexWrap:'wrap',gap:10,padding:'10px 18px',background:'#fff0ea',color:'#8c3d24',borderBottom:'1px solid #edc7b8',fontSize:12}}><span>{saveError}</span>{saveConflict&&onReloadLatest&&<button type="button" onClick={onReloadLatest} style={{padding:'7px 10px',borderRadius:8,background:'#fff',border:'1px solid #d6a18d',fontWeight:700}}>Reload latest (discard local edits)</button>}</div>}
+      {historyOpen&&<section aria-label="Revision history" style={{padding:'12px 18px',background:'#f8fafb',borderBottom:`1px solid ${D.border}`}}>
+        <div style={{display:'flex',justifyContent:'space-between',gap:12,alignItems:'center',marginBottom:8}}><strong style={{fontSize:12,color:'#17354a'}}>Immutable revision history</strong>{historyData?.currentRevision&&<small style={{color:D.muted}}>Current revision {historyData.currentRevision}</small>}</div>
+        {historyLoading&&<div role="status" style={{fontSize:11,color:D.muted}}>Loading verified history…</div>}
+        {historyError&&<div role="alert" style={{fontSize:11,color:'#8c3d24'}}>{historyError}</div>}
+        {!historyLoading&&!historyError&&historyData&&<div style={{display:'grid',gap:6}}>{(historyData.history||[]).length?(historyData.history||[]).map(item=><div key={item.revision} style={{display:'grid',gridTemplateColumns:'70px minmax(0,1fr) auto',gap:10,alignItems:'center',padding:'8px 10px',border:'1px solid #dfe6eb',borderRadius:9,background:'#fff'}}><strong style={{fontSize:11,color:'#0b2c4d'}}>Rev {item.revision}</strong><span style={{fontSize:10,color:'#5f7584'}}>{item.event==='baseline_capture'?'Original captured snapshot':'Protected teacher edit'}{item.actorUserId?` · actor ${item.actorUserId}`:''}</span><time style={{fontSize:9,color:'#7b8d99'}}>{item.createdAt?new Date(item.createdAt).toLocaleString():''}</time></div>):<div style={{fontSize:11,color:D.muted}}>No revision journal entries yet. The first successful edit captures the baseline and new revision atomically.</div>}</div>}
+      </section>}
       {bridgeError && <div role="alert" style={{padding:'12px 18px',background:'#fff2e7',color:'#813b18',borderBottom:'1px solid #ebc6ac',fontSize:12}}>{bridgeError}</div>}
       {!isMobile && activeEditor && <div style={{ padding:'9px 18px',fontSize:11,color:D.silver,borderBottom:`1px solid ${D.border}` }}>Plain bilingual question editing is enabled. Rich formatting requires the canonical renderer.</div>}
 

@@ -6,7 +6,7 @@ const page=read('app/teacher/paper-generator/page.tsx');
 const notifier=read('components/PaperGeneratorSaaS/PaperAiJobToasts.jsx');
 const gates=[
  ['Pro Editor no longer uses lossy first-question adapter',editor.includes("from './losslessLegacyBridge.mjs'")&&!editor.includes("from './documentAdapters'")],
- ['My Papers enters guarded editor only from own server vault',page.includes('onLoadPaper={openOwnedSavedPaper}')&&page.includes('classifyLegacyEditablePaper(paper).compatible')],
+ ['My Papers enters guarded editor only from own server vault',page.includes('onLoadPaper={openOwnedSavedPaper}')&&page.includes('classifyLegacyEditablePaper(source).compatible')&&page.includes('/document-review')],
  ['Every category item is represented with stable source identity',bridge.includes('sourceType:type.value,sourceIndex:index')&&bridge.includes('questionNo:blocks.length+1')],
  ['Original source is used as immutable apply baseline',editor.includes('applyLegacyWorkingDocument(nextDoc, loadedPaper)')],
  ['Shared-category marks are blocked in UI and bridge',editor.includes("allowMarksEdit={block.marksScope==='item'||typeCounts[block.sourceType]===1}")&&bridge.includes('shared category marks cannot be changed')],

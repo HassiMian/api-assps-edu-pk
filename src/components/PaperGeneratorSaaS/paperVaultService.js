@@ -61,3 +61,63 @@ export function mergeVaultPapers(localPapers = [], serverPapers = []) {
   }
   return Array.from(map.values()).sort((a, b) => Date.parse(b.updatedAt || b.createdAt || 0) - Date.parse(a.updatedAt || a.createdAt || 0))
 }
+
+// V6-D strict revision API. These routes are signed-session scoped by the backend.
+// The client never supplies an owner/teacher id; it only supplies its verified
+// optimistic-concurrency token and the protected working-document delta model.
+export async function fetchProtectedPaperForEdit(id) {
+  if (!isPaperVaultAvailable()) return null
+  const encoded = encodeURIComponent(id)
+  const [{ data: detail }, { data: review }] = await Promise.all([
+    api.get(`/portal/paper-studio/papers/${encoded}`),
+    api.get(`/portal/paper-studio/papers/${encoded}/document-review`),
+  ])
+  if (!detail?.success || !detail?.data?.document) throw new Error(detail?.message || 'Paper could not be verified for editing.')
+  if (!review?.success || !review?.review?.snapshotHash) throw new Error(review?.message || 'Paper revision token could not be verified.')
+  if (String(detail.data.id) !== String(review.paperId) || Number(detail.data.revision) !== Number(review.revision)) {
+    const error = new Error('Paper changed while the editor was opening. Reload My Papers and try again.')
+    error.code = 'OPEN_RACE'
+    throw error
+  }
+  return {
+    ...detail.data.document,
+    id: String(detail.data.id),
+    revision: Number(detail.data.revision),
+    serverSynced: true,
+    __v6dSnapshotHash: review.review.snapshotHash,
+    __v6dReviewFamily: review.review.family,
+    __v6dReviewStatus: review.review.reviewStatus,
+  }
+}
+
+export async function saveProtectedPaperRevision(id, { expectedRevision, expectedSnapshotHash, workingDocument }) {
+  if (!isPaperVaultAvailable()) return null
+  try {
+    const { data } = await api.patch(`/portal/paper-studio/papers/${encodeURIComponent(id)}`, {
+      expectedRevision,
+      expectedSnapshotHash,
+      workingDocument,
+    })
+    if (!data?.success || !data?.data) throw new Error(data?.message || 'Revision could not be saved.')
+    return data.data
+  } catch (error) {
+    const payload = error?.response?.data
+    if (payload?.code) error.code = payload.code
+    if (payload?.message) error.message = payload.message
+    throw error
+  }
+}
+
+export async function fetchProtectedPaperRevisions(id) {
+  if (!isPaperVaultAvailable()) return null
+  const { data } = await api.get(`/portal/paper-studio/papers/${encodeURIComponent(id)}/revisions`)
+  if (!data?.success || !data?.data) throw new Error(data?.message || 'Revision history could not be loaded.')
+  return data.data
+}
+
+export async function fetchProtectedPaperRevision(id, revision) {
+  if (!isPaperVaultAvailable()) return null
+  const { data } = await api.get(`/portal/paper-studio/papers/${encodeURIComponent(id)}/revisions/${encodeURIComponent(revision)}`)
+  if (!data?.success || !data?.data) throw new Error(data?.message || 'Revision snapshot could not be loaded.')
+  return data.data
+}
