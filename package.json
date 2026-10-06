@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "node scripts/write-build-provenance.mjs && next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "postbuild": "node scripts/normalize-next-external-links.mjs"
   },
   "dependencies": {
     "@tiptap/extension-image": "^3.27.1",
